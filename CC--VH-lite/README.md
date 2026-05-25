@@ -13,9 +13,12 @@ Un solo script de Python (`cc_voice_lite.py`), puro stdlib. Usa el comando
 ## Qué hace
 
 Cuando Claude Code dispara un hook, el script dice **el nombre del repo/folder**
-y luego **un fragmento de lo que dice Claude** (mínimo 30 palabras, o hasta el 50%
-del total si la respuesta es larga), con la voz **Paulina** (mexicana). Así sabes
-de qué sesión viene la voz. Ej: _"Documents. Ya quedó el módulo que andábamos..."_
+y luego **un fragmento de lo que dice Claude**, con la voz **Paulina** (mexicana).
+Así sabes de qué sesión viene la voz. Ej: _"Documents. Ya quedó el módulo."_
+
+El fragmento se corta en oración completa: lee al menos `MIN_WORDS` (30) palabras
+y sigue **hasta cerrar la oración** (`.`, `!`, `?`, `…`), aunque rebase el tope.
+`MAX_RATIO` (50%) solo actúa de red de seguridad si el texto no trae puntuación.
 
 | Evento         | Qué dice                                                        |
 |----------------|----------------------------------------------------------------|
@@ -57,8 +60,8 @@ Todo se edita arriba del propio `cc_voice_lite.py`:
 
 - `VOICE`     — cambia la voz. Lista completa: `say -v '?'`
 - `RATE`      — velocidad en palabras por minuto.
-- `MIN_WORDS` — mínimo de palabras a leer (default 30).
-- `MAX_RATIO` — tope como % del total en respuestas largas (default 0.5 = 50%).
+- `MIN_WORDS` — mínimo de palabras antes de buscar el fin de oración (default 30).
+- `MAX_RATIO` — red de seguridad (% del total) si el texto no tiene puntuación (0.5).
 
 ## Por qué no bloquea a Claude
 
