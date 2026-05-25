@@ -116,13 +116,28 @@ def clean_for_speech(text: str) -> str:
     return " ".join(text.split())                       # colapsa espacios
 
 
+SENTENCE_END = ".!?…"  # signos que cierran una oración
+
+
 def pick_words(text: str) -> str:
-    """Mínimo MIN_WORDS palabras, o hasta MAX_RATIO del total (lo que sea mayor),
-    sin pasarse de las palabras que realmente hay."""
+    """Lee al menos MIN_WORDS palabras y termina la oración en curso (corta en el
+    primer fin de oración después del mínimo). La oración manda: puede rebasar el
+    tope. Si la respuesta es más corta que el mínimo, la dice toda. MAX_RATIO solo
+    actúa de red de seguridad cuando el texto no tiene puntuación."""
     words = text.split()
     total = len(words)
-    n = min(total, max(MIN_WORDS, int(total * MAX_RATIO)))
-    return " ".join(words[:n])
+    if total <= MIN_WORDS:
+        return " ".join(words)
+
+    # Desde el mínimo, busca la primera palabra que cierre oración (sin tope).
+    for i in range(MIN_WORDS - 1, total):
+        w = words[i].rstrip('")’\'»')   # ignora comillas/paréntesis de cierre
+        if w and w[-1] in SENTENCE_END:
+            return " ".join(words[: i + 1])
+
+    # Texto sin puntuación: red de seguridad al MAX_RATIO del total.
+    safety = min(total, max(MIN_WORDS, int(total * MAX_RATIO)))
+    return " ".join(words[:safety])
 
 
 def project_name(data: dict) -> str | None:
