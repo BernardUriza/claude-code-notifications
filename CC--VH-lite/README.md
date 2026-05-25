@@ -13,8 +13,9 @@ Un solo script de Python (`cc_voice_lite.py`), puro stdlib. Usa el comando
 ## Qué hace
 
 Cuando Claude Code dispara un hook, el script dice **el nombre del repo/folder**
-y luego **las primeras 10 palabras de lo que dice Claude**, con la voz **Paulina**
-(mexicana). Así sabes de qué sesión viene la voz. Ej: _"Documents. Ya quedó el..."_
+y luego **un fragmento de lo que dice Claude** (mínimo 30 palabras, o hasta el 50%
+del total si la respuesta es larga), con la voz **Paulina** (mexicana). Así sabes
+de qué sesión viene la voz. Ej: _"Documents. Ya quedó el módulo que andábamos..."_
 
 | Evento         | Qué dice                                                        |
 |----------------|----------------------------------------------------------------|
@@ -54,9 +55,10 @@ python3 cc_voice_lite.py --say "Probando, uno dos tres"
 
 Todo se edita arriba del propio `cc_voice_lite.py`:
 
-- `VOICE`      — cambia la voz. Lista completa: `say -v '?'`
-- `RATE`       — velocidad en palabras por minuto.
-- `WORD_LIMIT` — cuántas palabras de Claude leer (default 10).
+- `VOICE`     — cambia la voz. Lista completa: `say -v '?'`
+- `RATE`      — velocidad en palabras por minuto.
+- `MIN_WORDS` — mínimo de palabras a leer (default 30).
+- `MAX_RATIO` — tope como % del total en respuestas largas (default 0.5 = 50%).
 
 ## Por qué no bloquea a Claude
 
