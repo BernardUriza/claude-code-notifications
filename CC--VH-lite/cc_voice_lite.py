@@ -118,6 +118,16 @@ def first_words(text: str, n: int) -> str:
     return " ".join(text.split()[:n])
 
 
+def project_name(data: dict) -> str | None:
+    """Nombre del repo/folder de la sesión: basename del `cwd` que manda el hook."""
+    cwd = data.get("cwd")
+    if cwd:
+        name = Path(cwd).name
+        if name:
+            return name
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="CC--VH-lite: voz pa' Claude Code")
     parser.add_argument("--hook", help="Forzar evento (Stop, Notification, ...)")
@@ -143,7 +153,9 @@ def main() -> None:
     if text:
         snippet = first_words(clean_for_speech(text), WORD_LIMIT)
         if snippet:
-            speak(snippet)
+            # Primero el repo/folder, luego el texto del hook.
+            repo = project_name(data)
+            speak(f"{repo}. {snippet}" if repo else snippet)
 
     # Siempre exit 0: un hook nunca debe trabar a Claude.
     sys.exit(0)

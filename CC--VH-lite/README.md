@@ -12,8 +12,9 @@ Un solo script de Python (`cc_voice_lite.py`), puro stdlib. Usa el comando
 
 ## Qué hace
 
-Cuando Claude Code dispara un hook, el script lee **las primeras 10 palabras de
-lo que dice Claude** y las habla con la voz **Paulina** (mexicana):
+Cuando Claude Code dispara un hook, el script dice **el nombre del repo/folder**
+y luego **las primeras 10 palabras de lo que dice Claude**, con la voz **Paulina**
+(mexicana). Así sabes de qué sesión viene la voz. Ej: _"Documents. Ya quedó el..."_
 
 | Evento         | Qué dice                                                        |
 |----------------|----------------------------------------------------------------|
