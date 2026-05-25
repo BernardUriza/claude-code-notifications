@@ -5,7 +5,8 @@ CC--VH-lite — Notificaciones por voz para Claude Code, versión lite.
 Una sola dependencia: el comando `say` de macOS (ya viene instalado).
 Sin daemon, sin cola SQLite, sin OpenAI, sin Qwen, sin web UI. Nomás habla.
 
-Qué dice: las primeras N palabras de lo que acaba de decir Claude Code.
+Qué dice: el nombre del repo/folder + un fragmento de lo que dijo Claude Code
+(mínimo 30 palabras, o hasta el 50% del total si la respuesta es larga).
     - Stop / SubagentStop → última respuesta de Claude (la lee del transcript)
     - Notification        → el texto de la notificación (campo "message")
 
@@ -29,7 +30,8 @@ from pathlib import Path
 # ─────────────────────────────────────────────────────────────────────────────
 VOICE = "Paulina"   # voz mexicana de macOS. Lista: `say -v '?'`
 RATE = 190          # palabras por minuto (más alto = más rápido)
-WORD_LIMIT = 10     # cuántas palabras de Claude leer en voz alta
+MIN_WORDS = 30      # nunca menos de esto (salvo que la respuesta sea más corta)
+MAX_RATIO = 0.5     # respuestas largas: hasta este % de las palabras totales
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -114,8 +116,13 @@ def clean_for_speech(text: str) -> str:
     return " ".join(text.split())                       # colapsa espacios
 
 
-def first_words(text: str, n: int) -> str:
-    return " ".join(text.split()[:n])
+def pick_words(text: str) -> str:
+    """Mínimo MIN_WORDS palabras, o hasta MAX_RATIO del total (lo que sea mayor),
+    sin pasarse de las palabras que realmente hay."""
+    words = text.split()
+    total = len(words)
+    n = min(total, max(MIN_WORDS, int(total * MAX_RATIO)))
+    return " ".join(words[:n])
 
 
 def project_name(data: dict) -> str | None:
@@ -151,7 +158,7 @@ def main() -> None:
             text = last_assistant_text(tp)
 
     if text:
-        snippet = first_words(clean_for_speech(text), WORD_LIMIT)
+        snippet = pick_words(clean_for_speech(text))
         if snippet:
             # Primero el repo/folder, luego el texto del hook.
             repo = project_name(data)
