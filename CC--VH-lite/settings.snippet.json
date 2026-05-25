@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
+          }
+        ]
+      }
+    ]
+  }
+}
