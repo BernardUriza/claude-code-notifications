@@ -13,8 +13,9 @@ Un solo script de Python (`cc_voice_lite.py`), puro stdlib. Usa el comando
 ## Qué hace
 
 Cuando Claude Code dispara un hook, el script dice **el nombre del repo/folder**
-y luego **un fragmento de lo que dice Claude**, con la voz **Paulina** (mexicana).
-Así sabes de qué sesión viene la voz. Ej: _"Documents. Ya quedó el módulo."_
+y luego **un fragmento de lo que dice Claude**. Cada repo suena **con una voz
+distinta** (asignada por hash de su nombre, siempre la misma), así lo distingues
+por el timbre además del nombre. Ej: _"Documents. Ya quedó el módulo."_
 
 El fragmento se corta en oración completa: lee al menos `MIN_WORDS` (30) palabras
 y sigue **hasta cerrar la oración** (`.`, `!`, `?`, `…`), aunque rebase el tope.
@@ -58,10 +59,11 @@ python3 cc_voice_lite.py --say "Probando, uno dos tres"
 
 Todo se edita arriba del propio `cc_voice_lite.py`:
 
-- `VOICE`     — cambia la voz. Lista completa: `say -v '?'`
-- `RATE`      — velocidad en palabras por minuto.
-- `MIN_WORDS` — mínimo de palabras antes de buscar el fin de oración (default 30).
-- `MAX_RATIO` — red de seguridad (% del total) si el texto no tiene puntuación (0.5).
+- `VOICES`           — lista de voces que se reparten entre proyectos. `say -v '?'`
+- `VOICE_BY_PROJECT` — fija una voz para un repo concreto. Ej: `{"VHouse": "Mónica"}`
+- `RATE`             — velocidad en palabras por minuto.
+- `MIN_WORDS`        — mínimo de palabras antes de buscar el fin de oración (30).
+- `MAX_RATIO`        — red de seguridad (% del total) si el texto no tiene puntuación (0.5).
 
 ## Por qué no bloquea a Claude
 

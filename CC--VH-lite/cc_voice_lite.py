@@ -21,6 +21,7 @@ Uso manual (pruebas):
 import re
 import sys
 import json
+import hashlib
 import argparse
 import subprocess
 from pathlib import Path
@@ -28,25 +29,54 @@ from pathlib import Path
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG — edita aquí mismo, no hay config.json que valga
 # ─────────────────────────────────────────────────────────────────────────────
-VOICE = "Paulina"   # voz mexicana de macOS. Lista: `say -v '?'`
+# Voces (en español) que se reparten entre proyectos. Cada repo/folder agarra
+# SIEMPRE la misma voz (asignada por hash de su nombre), así lo distingues de
+# oído. Lista completa de voces de tu Mac: `say -v '?'`
+VOICES = [
+    "Paulina",
+    "Mónica",
+    "Eddy (Spanish (Mexico))",
+    "Flo (Spanish (Mexico))",
+    "Reed (Spanish (Mexico))",
+    "Rocko (Spanish (Mexico))",
+    "Sandy (Spanish (Mexico))",
+    "Shelley (Spanish (Mexico))",
+    "Grandma (Spanish (Mexico))",
+    "Grandpa (Spanish (Mexico))",
+]
+# Override manual opcional: fija una voz para un proyecto (basename del cwd).
+# Ej: {"symfarmia": "Paulina", "VHouse": "Mónica"}
+VOICE_BY_PROJECT: dict[str, str] = {}
+
 RATE = 190          # palabras por minuto (más alto = más rápido)
 MIN_WORDS = 30      # nunca menos de esto (salvo que la respuesta sea más corta)
 MAX_RATIO = 0.5     # respuestas largas: hasta este % de las palabras totales
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def speak(text: str) -> None:
+def speak(text: str, voice: str | None = None) -> None:
     """Habla en segundo plano y NO bloquea a Claude Code.
 
     start_new_session=True desacopla el `say` del proceso del hook,
     así Claude no espera a que termine el audio ni lo corta al salir.
     """
     subprocess.Popen(
-        ["say", "-v", VOICE, "-r", str(RATE), text],
+        ["say", "-v", voice or VOICES[0], "-r", str(RATE), text],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+
+
+def voice_for(project: str | None) -> str:
+    """Voz asignada a un proyecto: override manual si existe, si no una voz fija
+    elegida por hash estable del nombre (misma voz siempre, sin configurar nada)."""
+    if not project:
+        return VOICES[0]
+    if project in VOICE_BY_PROJECT:
+        return VOICE_BY_PROJECT[project]
+    digest = hashlib.md5(project.encode("utf-8")).hexdigest()
+    return VOICES[int(digest, 16) % len(VOICES)]
 
 
 def read_payload(cli_hook: str | None) -> tuple[str | None, dict]:
@@ -177,7 +207,7 @@ def main() -> None:
         if snippet:
             # Primero el repo/folder, luego el texto del hook.
             repo = project_name(data)
-            speak(f"{repo}. {snippet}" if repo else snippet)
+            speak(f"{repo}. {snippet}" if repo else snippet, voice=voice_for(repo))
 
     # Siempre exit 0: un hook nunca debe trabar a Claude.
     sys.exit(0)
