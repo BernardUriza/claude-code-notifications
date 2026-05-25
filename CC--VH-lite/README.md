@@ -12,16 +12,18 @@ Un solo script de Python (`cc_voice_lite.py`), puro stdlib. Usa el comando
 
 ## Qué hace
 
-Cuando Claude Code dispara un hook, el script dice una frase corta con la voz
-**Paulina** (mexicana). Solo en 3 eventos:
+Cuando Claude Code dispara un hook, el script lee **las primeras 10 palabras de
+lo que dice Claude** y las habla con la voz **Paulina** (mexicana):
 
-| Evento         | Cuándo suena                  | Ejemplo de frase                |
-|----------------|-------------------------------|---------------------------------|
-| `SessionStart` | Arranca una sesión            | "Listo pa' chambear"            |
-| `Stop`         | Claude terminó                | "Ya quedó"                      |
-| `Notification` | Claude necesita tu permiso    | "Oye, necesito tu visto bueno"  |
+| Evento         | Qué dice                                                        |
+|----------------|----------------------------------------------------------------|
+| `Stop`         | Las primeras 10 palabras de la última respuesta de Claude       |
+| `SubagentStop` | Igual, pero de la respuesta del subagente                       |
+| `Notification` | Las primeras 10 palabras del texto de la notificación (permiso) |
 
-Cualquier otro evento → no suena nada (sale calladito).
+Para `Stop` saca el texto del **transcript** (`transcript_path` que manda el hook),
+agarra la última respuesta del assistant, le quita el markdown/código/emojis y lee
+las primeras `WORD_LIMIT` palabras. Cualquier otro evento → no suena nada.
 
 ## Instalar (30 segundos)
 
@@ -35,11 +37,13 @@ Cualquier otro evento → no suena nada (sale calladito).
 ## Probar sin Claude
 
 ```bash
-# Por stdin (como lo llama Claude de verdad)
-echo '{"hook_event_name":"Stop"}' | python3 cc_voice_lite.py
+# Stop: lee un transcript real y habla las primeras 10 palabras de Claude
+echo '{"hook_event_name":"Stop","transcript_path":"/ruta/al/transcript.jsonl"}' \
+  | python3 cc_voice_lite.py
 
-# Por argumento
-python3 cc_voice_lite.py --hook Notification
+# Notification: habla las primeras 10 palabras del mensaje
+echo '{"hook_event_name":"Notification","message":"Claude needs your permission"}' \
+  | python3 cc_voice_lite.py
 
 # Decir cualquier cosa (modo prueba)
 python3 cc_voice_lite.py --say "Probando, uno dos tres"
@@ -49,9 +53,9 @@ python3 cc_voice_lite.py --say "Probando, uno dos tres"
 
 Todo se edita arriba del propio `cc_voice_lite.py`:
 
-- `VOICE` — cambia la voz. Lista completa: `say -v '?'`
-- `RATE`  — velocidad en palabras por minuto.
-- `PHRASES` — agrega o quita frases por evento (se elige una al azar).
+- `VOICE`      — cambia la voz. Lista completa: `say -v '?'`
+- `RATE`       — velocidad en palabras por minuto.
+- `WORD_LIMIT` — cuántas palabras de Claude leer (default 10).
 
 ## Por qué no bloquea a Claude
 
