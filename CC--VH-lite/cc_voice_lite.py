@@ -34,6 +34,13 @@ from pathlib import Path
 # ── Config Azure OpenAI TTS (onyx) ──
 SECRET_FILE = Path.home() / ".secrets" / "azure-openai-key.txt"
 
+IS_WINDOWS = sys.platform.startswith("win")
+
+# Fallback local de Windows (SAPI vía System.Speech). Voz vacía = la default del
+# sistema. Lista las instaladas con:
+#   powershell "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices().VoiceInfo.Name"
+WIN_SAY_VOICE = os.environ.get("WIN_SAY_VOICE", "")
+
 
 def _cfg(name: str, default: str = "") -> str:
     """Lee 'name: valor' (o 'name=valor') del archivo de notas de secretos.
@@ -68,10 +75,57 @@ MAX_CHARS = 600
 SENTENCE_END = ".!?…"
 
 
-def speak_blocking(text: str, voice: str) -> None:
-    """Genera el audio con Azure onyx y lo reproduce con afplay.
+def _play_audio_file(path: str) -> None:
+    """Reproduce un archivo de audio de forma bloqueante, según la plataforma."""
+    if IS_WINDOWS:
+        ps = (
+            "Add-Type -AssemblyName presentationCore;"
+            "$p = New-Object System.Windows.Media.MediaPlayer;"
+            "$p.Open([uri]$env:CC_AUDIO_PATH);"
+            "Start-Sleep -Milliseconds 300;"
+            "$p.Play();"
+            "while ($p.NaturalDuration.HasTimeSpan -eq $false) { Start-Sleep -Milliseconds 50 };"
+            "Start-Sleep -Seconds $p.NaturalDuration.TimeSpan.TotalSeconds;"
+            "$p.Close()"
+        )
+        env = os.environ.copy()
+        env["CC_AUDIO_PATH"] = path
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            env=env, check=False,
+        )
+    else:
+        subprocess.run(["afplay", path], check=False)
 
-    Si Azure falla por lo que sea, cae al `say` de macOS para no quedar mudo.
+
+def _say_local(text: str) -> None:
+    """Voz local (último recurso): SAPI en Windows, `say` en macOS."""
+    try:
+        if IS_WINDOWS:
+            env = os.environ.copy()
+            env["CC_VOICE_TEXT"] = text
+            env["CC_VOICE_NAME"] = WIN_SAY_VOICE
+            ps = (
+                "Add-Type -AssemblyName System.Speech;"
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                "if ($env:CC_VOICE_NAME) { try { $s.SelectVoice($env:CC_VOICE_NAME) } catch {} };"
+                "$s.Speak($env:CC_VOICE_TEXT)"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                env=env, check=False,
+            )
+        else:
+            subprocess.run(["say", "-v", SAY_VOICE, text], check=False)
+    except Exception:
+        pass
+
+
+def speak_blocking(text: str, voice: str) -> None:
+    """Genera el audio con Azure onyx y lo reproduce (afplay/MediaPlayer).
+
+    Si Azure falla por lo que sea, cae a la voz local (SAPI en Windows, `say`
+    en macOS) para no quedar mudo.
     """
     if AZURE_KEY:
         try:
@@ -94,7 +148,7 @@ def speak_blocking(text: str, voice: str) -> None:
                     fh.write(audio)
                     mp3 = fh.name
                 try:
-                    subprocess.run(["afplay", mp3], check=False)
+                    _play_audio_file(mp3)
                 finally:
                     try:
                         os.unlink(mp3)
@@ -103,26 +157,36 @@ def speak_blocking(text: str, voice: str) -> None:
                 return
         except Exception:
             pass  # cae al fallback
-    # Fallback: voz local de macOS.
-    try:
-        subprocess.run(["say", "-v", SAY_VOICE, text], check=False)
-    except Exception:
-        pass
+    # Fallback: voz local (SAPI en Windows, `say` en macOS).
+    _say_local(text)
 
 
 def speak_detached(text: str, voice: str) -> None:
     """Habla en segundo plano y NO bloquea a Claude Code.
 
-    start_new_session=True desacopla el habla del proceso del hook, así
-    Claude no espera a que termine el audio ni lo corta al salir.
+    Re-invoca este script con --speak-now en un proceso desacoplado, así Claude
+    no espera a que termine el audio ni lo corta al salir:
+      - macOS:   start_new_session=True (POSIX).
+      - Windows: DETACHED_PROCESS, sin ventana de consola.
+    El proceso hijo corre speak_blocking (Azure onyx + reproducción/fallback
+    según plataforma).
     """
-    subprocess.Popen(
-        [sys.executable or "python3", str(Path(__file__).resolve()),
-         "--speak-now", text, "--voice", voice],
-        start_new_session=True,
+    popen_kwargs: dict = dict(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+    )
+    if IS_WINDOWS:
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NO_WINDOW = 0x08000000
+        popen_kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NO_WINDOW
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    subprocess.Popen(
+        [sys.executable or "python3", str(Path(__file__).resolve()),
+         "--speak-now", text, "--voice", voice],
+        **popen_kwargs,
     )
 
 
