@@ -1,0 +1,8 @@
+.claude/
+__pycache__/
+*.pyc
+Icon
+Icon?
+*.zip
+claude-code-voice-handler-master/
+.DS_Store

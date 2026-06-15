@@ -1,200 +1,245 @@
 #!/usr/bin/env python3
 """
-CC--VH-lite — Notificaciones por voz para Claude Code, versión lite.
+CC--VH-lite — voz ONYX para Claude Code (reconstruida 2026-06-03).
 
-Una sola dependencia: el comando `say` de macOS (ya viene instalado).
-Sin daemon, sin cola SQLite, sin OpenAI, sin Qwen, sin web UI. Nomás habla.
+SOLO Azure OpenAI TTS, voz onyx. Sin Arbor (la voz culera que se colgaba
+30s y no se podía detener) y sin servicio local. Habla un fragmento de lo
+que dijo Claude Code, en segundo plano (detached), sin bloquear a Claude.
 
-Qué dice: el nombre del repo/folder + un fragmento de lo que dijo Claude Code
-(mínimo 30 palabras, o hasta el 50% del total si la respuesta es larga).
-    - Stop / SubagentStop → última respuesta de Claude (la lee del transcript)
+Respeta el silencio de cc-notify: si existe ~/.cc-notify/quiet o
+~/.cc-voice-off, NO habla (el .py se lee fresco en cada hook, así que
+`ccn quiet` la calla sin reiniciar Claude Code).
+
+Eventos:
+    - Stop / SubagentStop → última respuesta de Claude (del transcript .jsonl)
     - Notification        → el texto de la notificación (campo "message")
 
-Cómo lo llaman los hooks de Claude Code:
-    El hook manda un JSON por stdin con "hook_event_name" y "transcript_path".
+Config: ~/.secrets/azure-openai-key.txt (archivo de notas con la línea
+    AZURE_OPENAI_TTS_KEY: <key>, más Endpoint/Deployment/API-Version).
 
-Uso manual (pruebas):
-    echo '{"hook_event_name":"Stop","transcript_path":"/ruta/al.jsonl"}' | python3 cc_voice_lite.py
-    python3 cc_voice_lite.py --say "Probando, uno dos tres"
+Prueba manual:
+    python3 cc_voice_lite.py --say "Probando la voz onyx"
 """
 
+import os
 import re
 import sys
 import json
-import hashlib
 import argparse
 import subprocess
+import tempfile
+import urllib.request
 from pathlib import Path
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONFIG — edita aquí mismo, no hay config.json que valga
-# ─────────────────────────────────────────────────────────────────────────────
-# Voces (en español) que se reparten entre proyectos. Cada repo/folder agarra
-# SIEMPRE la misma voz (asignada por hash de su nombre), así lo distingues de
-# oído. Lista completa de voces de tu Mac: `say -v '?'`
-VOICES = [
-    "Paulina",
-    "Mónica",
-    "Eddy (Spanish (Mexico))",
-    "Flo (Spanish (Mexico))",
-    "Reed (Spanish (Mexico))",
-    "Rocko (Spanish (Mexico))",
-    "Sandy (Spanish (Mexico))",
-    "Shelley (Spanish (Mexico))",
-    "Grandma (Spanish (Mexico))",
-    "Grandpa (Spanish (Mexico))",
-]
-# Override manual opcional: fija una voz para un proyecto (basename del cwd).
-# Ej: {"symfarmia": "Paulina", "VHouse": "Mónica"}
-VOICE_BY_PROJECT: dict[str, str] = {}
-
-RATE = 190          # palabras por minuto (más alto = más rápido)
-MIN_WORDS = 30      # nunca menos de esto (salvo que la respuesta sea más corta)
-MAX_RATIO = 0.5     # respuestas largas: hasta este % de las palabras totales
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Config Azure OpenAI TTS (onyx) ──
+SECRET_FILE = Path.home() / ".secrets" / "azure-openai-key.txt"
 
 
-def speak(text: str, voice: str | None = None) -> None:
+def _cfg(name: str, default: str = "") -> str:
+    """Lee 'name: valor' (o 'name=valor') del archivo de notas de secretos.
+
+    Toma el primer token del valor (corta comentarios tipo '(verified ...)').
+    Las variables de entorno tienen prioridad.
+    """
+    env = os.environ.get(name)
+    if env:
+        return env
+    if SECRET_FILE.exists():
+        for line in SECRET_FILE.read_text(encoding="utf-8").splitlines():
+            m = re.match(rf"^\s*{re.escape(name)}\s*[:=]\s*(\S+)", line, re.I)
+            if m:
+                return m.group(1).strip()
+    return default
+
+
+AZURE_KEY = _cfg("AZURE_OPENAI_TTS_KEY") or _cfg("AZURE_OPENAI_KEY")
+AZURE_ENDPOINT = _cfg("Endpoint", "https://northcentralus.api.cognitive.microsoft.com/").rstrip("/")
+AZURE_DEPLOYMENT = _cfg("Deployment", "tts")
+AZURE_API_VERSION = _cfg("API-Version", "2024-02-15-preview")
+AZURE_VOICE = os.environ.get("AZURE_TTS_VOICE", "onyx")
+
+# Fallback último recurso: voz local `say` de macOS (instantánea, gratis).
+SAY_VOICE = os.environ.get("SAY_VOICE", "Paulina")
+
+# ── Selección de fragmento ──
+MIN_WORDS = 30
+MAX_RATIO = 0.5
+MAX_CHARS = 600
+SENTENCE_END = ".!?…"
+
+
+def speak_blocking(text: str, voice: str) -> None:
+    """Genera el audio con Azure onyx y lo reproduce con afplay.
+
+    Si Azure falla por lo que sea, cae al `say` de macOS para no quedar mudo.
+    """
+    if AZURE_KEY:
+        try:
+            url = (f"{AZURE_ENDPOINT}/openai/deployments/{AZURE_DEPLOYMENT}"
+                   f"/audio/speech?api-version={AZURE_API_VERSION}")
+            body = json.dumps({
+                "model": AZURE_DEPLOYMENT,
+                "input": text,
+                "voice": voice,
+                "response_format": "mp3",
+            }).encode("utf-8")
+            req = urllib.request.Request(url, data=body, method="POST", headers={
+                "api-key": AZURE_KEY,
+                "Content-Type": "application/json",
+            })
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                audio = resp.read()
+            if audio:
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fh:
+                    fh.write(audio)
+                    mp3 = fh.name
+                try:
+                    subprocess.run(["afplay", mp3], check=False)
+                finally:
+                    try:
+                        os.unlink(mp3)
+                    except OSError:
+                        pass
+                return
+        except Exception:
+            pass  # cae al fallback
+    # Fallback: voz local de macOS.
+    try:
+        subprocess.run(["say", "-v", SAY_VOICE, text], check=False)
+    except Exception:
+        pass
+
+
+def speak_detached(text: str, voice: str) -> None:
     """Habla en segundo plano y NO bloquea a Claude Code.
 
-    start_new_session=True desacopla el `say` del proceso del hook,
-    así Claude no espera a que termine el audio ni lo corta al salir.
+    start_new_session=True desacopla el habla del proceso del hook, así
+    Claude no espera a que termine el audio ni lo corta al salir.
     """
     subprocess.Popen(
-        ["say", "-v", voice or VOICES[0], "-r", str(RATE), text],
+        [sys.executable or "python3", str(Path(__file__).resolve()),
+         "--speak-now", text, "--voice", voice],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
     )
 
 
-def voice_for(project: str | None) -> str:
-    """Voz asignada a un proyecto: override manual si existe, si no una voz fija
-    elegida por hash estable del nombre (misma voz siempre, sin configurar nada)."""
-    if not project:
-        return VOICES[0]
-    if project in VOICE_BY_PROJECT:
-        return VOICE_BY_PROJECT[project]
-    digest = hashlib.md5(project.encode("utf-8")).hexdigest()
-    return VOICES[int(digest, 16) % len(VOICES)]
-
-
-def read_payload(cli_hook: str | None) -> tuple[str | None, dict]:
+def read_payload(cli_hook):
     """Lee el JSON de stdin. Devuelve (evento, data)."""
-    data: dict = {}
-    if not sys.stdin.isatty():
-        try:
-            raw = sys.stdin.read()
-            if raw:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    data = parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-    event = cli_hook or data.get("hook_event_name")
-    return event, data
+    data = {}
+    try:
+        raw = sys.stdin.read()
+        if raw.strip():
+            data = json.loads(raw)
+    except Exception:
+        data = {}
+    return (cli_hook or data.get("hook_event_name")), data
 
 
-def last_assistant_text(transcript_path: str) -> str | None:
+def last_assistant_text(transcript_path: str):
     """Saca el texto de la última respuesta de Claude del transcript .jsonl.
 
-    El transcript es JSONL: cada línea un objeto. Las respuestas de Claude son
-    entries con type='assistant' y message.content = lista de bloques; los
-    bloques de texto tienen type='text'. Recorremos de atrás hacia adelante.
+    Recorre de atrás hacia adelante buscando type='assistant' y los bloques
+    de message.content con type='text'.
     """
-    p = Path(transcript_path)
-    if not p.exists():
-        return None
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        lines = Path(transcript_path).read_text(encoding="utf-8").splitlines()
+    except Exception:
         return None
-
     for line in reversed(lines):
         line = line.strip()
         if not line:
             continue
         try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
+            obj = json.loads(line)
+        except Exception:
             continue
-        if entry.get("type") != "assistant":
+        if obj.get("type") != "assistant":
             continue
-        msg = entry.get("message", {})
-        content = msg.get("content")
-        texts = []
+        content = (obj.get("message") or {}).get("content")
+        if isinstance(content, str):
+            return content
         if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    t = block.get("text", "").strip()
-                    if t:
-                        texts.append(t)
-        elif isinstance(content, str) and content.strip():
-            texts.append(content.strip())
-        if texts:
-            return " ".join(texts)
+            parts = [b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text"]
+            txt = " ".join(p for p in parts if p).strip()
+            if txt:
+                return txt
     return None
 
 
 def clean_for_speech(text: str) -> str:
-    """Quita markdown y código pa' que `say` no lea símbolos raros."""
-    if "```" in text:                                  # corta en bloque de código
-        text = text.split("```", 1)[0]
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # [txt](url) -> txt
-    text = re.sub(r"[*_`#>~|]", "", text)               # símbolos markdown
-    text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", text)  # emojis
-    return " ".join(text.split())                       # colapsa espacios
-
-
-SENTENCE_END = ".!?…"  # signos que cierran una oración
+    """Quita markdown y código pa' que la voz no lea símbolos raros."""
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"`[^`]*`", " ", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # links markdown
+    text = re.sub(r"[*_`#>~|]", " ", text)                # símbolos markdown
+    text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", " ", text)  # emojis
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def pick_words(text: str) -> str:
-    """Lee al menos MIN_WORDS palabras y termina la oración en curso (corta en el
-    primer fin de oración después del mínimo). La oración manda: puede rebasar el
-    tope. Si la respuesta es más corta que el mínimo, la dice toda. MAX_RATIO solo
-    actúa de red de seguridad cuando el texto no tiene puntuación."""
+    """Al menos MIN_WORDS palabras, terminando la oración en curso.
+
+    La oración manda: puede rebasar el mínimo. Si el texto es más corto que
+    el mínimo, lo dice todo. MAX_RATIO es red de seguridad cuando no hay
+    puntuación.
+    """
+    if not text:
+        return ""
     words = text.split()
     total = len(words)
     if total <= MIN_WORDS:
-        return " ".join(words)
+        return text.strip(" \")’'»")[:MAX_CHARS]
+    # Busca el primer fin de oración después del mínimo.
+    cut = None
+    for i in range(MIN_WORDS, total):
+        if words[i] and words[i][-1] in SENTENCE_END:
+            cut = i + 1
+            break
+    if cut is None:
+        cut = min(total, max(MIN_WORDS, int(total * MAX_RATIO)))
+    return " ".join(words[:cut]).strip(" \")’'»")[:MAX_CHARS]
 
-    # Desde el mínimo, busca la primera palabra que cierre oración (sin tope).
-    for i in range(MIN_WORDS - 1, total):
-        w = words[i].rstrip('")’\'»')   # ignora comillas/paréntesis de cierre
-        if w and w[-1] in SENTENCE_END:
-            return " ".join(words[: i + 1])
 
-    # Texto sin puntuación: red de seguridad al MAX_RATIO del total.
-    safety = min(total, max(MIN_WORDS, int(total * MAX_RATIO)))
-    return " ".join(words[:safety])
-
-
-def project_name(data: dict) -> str | None:
-    """Nombre del repo/folder de la sesión: basename del `cwd` que manda el hook."""
+def project_name(data: dict):
+    """Nombre del repo/folder: basename del cwd que manda el hook."""
     cwd = data.get("cwd")
-    if cwd:
-        name = Path(cwd).name
-        if name:
-            return name
-    return None
+    return Path(cwd).name if cwd else None
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CC--VH-lite: voz pa' Claude Code")
+    parser = argparse.ArgumentParser(description="CC--VH-lite: voz onyx pa' Claude Code")
     parser.add_argument("--hook", help="Forzar evento (Stop, Notification, ...)")
     parser.add_argument("--say", help="Habla este texto y sale (modo prueba)")
+    parser.add_argument("--speak-now", help="(interno) proceso detached que habla")
+    parser.add_argument("--voice", default=AZURE_VOICE)
     args = parser.parse_args()
 
-    # Modo prueba: di lo que te pasen y listo
-    if args.say:
-        speak(args.say)
+    # Modo interno: el proceso detached que realmente habla.
+    if args.speak_now is not None:
+        try:
+            speak_blocking(args.speak_now, args.voice)
+        except Exception:
+            pass
         return
 
-    event, data = read_payload(args.hook)
+    # Modo prueba manual.
+    if args.say:
+        speak_detached(args.say, args.voice)
+        return
 
-    # ¿De dónde sacamos "lo que dice Claude"?
-    text: str | None = None
+    # Interruptor de silencio: respeta el `quiet` de cc-notify (ccn quiet)
+    # o el propio ~/.cc-voice-off. Calla sin reiniciar Claude Code.
+    if (Path.home() / ".cc-notify" / "quiet").exists() or \
+       (Path.home() / ".cc-voice-off").exists():
+        sys.exit(0)
+
+    event, data = read_payload(args.hook)
+    text = None
     if event == "Notification":
         text = data.get("message")
     elif event in ("Stop", "SubagentStop"):
@@ -205,11 +250,9 @@ def main() -> None:
     if text:
         snippet = pick_words(clean_for_speech(text))
         if snippet:
-            # Primero el repo/folder, luego el texto del hook.
             repo = project_name(data)
-            speak(f"{repo}. {snippet}" if repo else snippet, voice=voice_for(repo))
+            speak_detached(f"{repo}. {snippet}" if repo else snippet, AZURE_VOICE)
 
-    # Siempre exit 0: un hook nunca debe trabar a Claude.
     sys.exit(0)
 
 

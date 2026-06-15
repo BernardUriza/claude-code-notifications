@@ -1,32 +1,19 @@
 {
+  "_comment": "Reemplaza /ABSOLUTE/PATH/TO por la ruta donde clonaste este repo. Fusiona estas llaves con tu ~/.claude/settings.json (no sobrescribas un bloque hooks existente).",
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
-          }
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_notify.py" },
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_voice_lite.py" }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /Users/bernardurizaorozco/Documents/CC--VH-lite/cc_voice_lite.py"
-          }
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_notify.py" },
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_voice_lite.py" }
         ]
       }
     ]
