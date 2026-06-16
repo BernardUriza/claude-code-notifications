@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """
-cc_tray.py — Ícono en la bandeja del sistema para CC--VH-lite (Windows/macOS).
+cc_tray.py — System-tray icon for CC--VH-lite (Windows/macOS).
 
-Muestra el estado de cc-notify en tiempo real y permite silenciar, activar DND,
-o restablecer notificaciones — sin abrir una terminal.
+Shows cc-notify's state in real time and lets you mute, enable DND, or restore
+notifications — without opening a terminal.
 
-── Requisitos ──
+── Requirements ──
     pip install pystray pillow
 
-── Uso ──
-    python cc_tray.py            # lanza el tray y se queda en background
+── Usage ──
+    python cc_tray.py            # launch the tray and keep it in the background
     python cc_tray.py --help
 
-── Estados del ícono ──
-    🟢 Verde   = notificando (todo activo)
-    🟡 Amarillo = DND activo con timer
-    🔴 Rojo    = silencio global (ccn quiet)
-    ⚫ Gris    = cc-notify no instalado / sin sesiones
+── Icon states ──
+    🟢 Green  = notifying (all active)
+    🟡 Yellow = DND active with timer
+    🔴 Red    = global silence (ccn quiet)
+    ⚫ Gray   = cc-notify not installed / no sessions
 
-── Integración con claudecode ──
-    Agrega en tu ~/.claude/settings.json (o deja que install.py lo haga):
-    No requiere hookeo — corre aparte, persistente.
-    En Windows: agrégalo al Startup con install.py --tray-autostart.
+── Claude Code integration ──
+    No hooking required — it runs separately, persistent.
+    On Windows: add it to Startup with install.py --tray-autostart.
 """
 
 import sys
@@ -30,8 +29,8 @@ import threading
 import subprocess
 from pathlib import Path
 
-# La consola de Windows usa cp1252 por defecto y truena con los emojis de los
-# prints (--check-deps, mensajes de error). UTF-8 para no reventar.
+# The Windows console defaults to cp1252 and blows up on the emojis in the
+# prints (--check-deps, error messages). UTF-8 so it doesn't crash.
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -40,16 +39,16 @@ except Exception:
 
 try:
     import pystray
-    from PIL import Image          # el dibujo del isotipo vive en cc_theme
+    from PIL import Image          # the isotype drawing lives in cc_theme
 except ImportError:
     print(
-        "ERROR: Faltan dependencias del tray.\n"
-        "Instálalas con:  pip install pystray pillow\n"
-        "Luego vuelve a correr: python cc_tray.py"
+        "ERROR: Tray dependencies missing.\n"
+        "Install them with:  pip install pystray pillow\n"
+        "Then re-run: python cc_tray.py"
     )
     sys.exit(1)
 
-# ── Rutas de estado (mismas que cc_notify.py) ──
+# ── State paths (same as cc_notify.py) ──
 STATE   = Path.home() / ".cc-notify"
 MUTE_DIR = STATE / "mute"
 QUIET   = STATE / "quiet"
@@ -57,19 +56,19 @@ NOSOUND = STATE / "nosound"
 DND     = STATE / "dnd"
 SESS_DIR = STATE / "sessions"
 
-# Branding compartido (paleta + isotipo dibujado en código).
+# Shared branding (palette + isotype drawn in code).
 import cc_theme
 
-SIZE          = 64          # px del ícono (pystray lo escala)
-REFRESH_SECS  = 15          # con qué frecuencia se refresca el estado
+SIZE          = 64          # icon px (pystray scales it)
+REFRESH_SECS  = 15          # how often the state refreshes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Estado
+# State
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _dnd_remaining() -> float:
-    """Segundos restantes de DND, o 0 si no está activo."""
+    """Seconds left of DND, or 0 if not active."""
     if not DND.exists():
         return 0.0
     try:
@@ -100,7 +99,7 @@ def _fmt_until(secs: float) -> str:
 
 
 def get_state() -> dict:
-    """Snapshot del estado actual de cc-notify."""
+    """Snapshot of cc-notify's current state."""
     quiet = QUIET.exists()
     dnd_rem = _dnd_remaining()
     nosound = NOSOUND.exists()
@@ -108,19 +107,19 @@ def get_state() -> dict:
 
     if quiet or nosound:
         variant = "muted"
-        label = "Silenciado (global)" if quiet else "Sin sonido"
+        label = "Silenced (global)" if quiet else "No sound"
         symbol = "🔇"
     elif dnd_rem > 0:
         variant = "dnd"
-        label = f"DND {_fmt_rem(dnd_rem)} (hasta {_fmt_until(dnd_rem)})"
+        label = f"DND {_fmt_rem(dnd_rem)} (until {_fmt_until(dnd_rem)})"
         symbol = "⏳"
     elif sessions:
         variant = "active"
-        label = "Activo — notificando"
+        label = "Active — notifying"
         symbol = "🔔"
     else:
         variant = "idle"
-        label = "Sin sesiones"
+        label = "No sessions"
         symbol = "○"
 
     return {
@@ -136,16 +135,16 @@ def get_state() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ícono: isotipo CC--VH-lite por estado (delegado a cc_theme)
+# Icon: CC--VH-lite isotype per state (delegated to cc_theme)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_icon(variant: str) -> Image.Image:
-    """Isotipo de la bandeja para el estado dado (active/dnd/muted/idle)."""
+    """Tray isotype for the given state (active/dnd/muted/idle)."""
     return cc_theme.draw_logo(SIZE, variant=variant)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Acciones del menú
+# Menu actions
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _write_dnd(minutes: int) -> None:
@@ -164,7 +163,7 @@ def _toggle_quiet() -> None:
         QUIET.unlink(missing_ok=True)
     else:
         QUIET.touch()
-        _cancel_dnd()   # quiet global cancela DND
+        _cancel_dnd()   # global quiet cancels DND
 
 
 def _toggle_sound() -> None:
@@ -184,7 +183,7 @@ class CCTray:
         self._icon: pystray.Icon | None = None
         self._stop_event = threading.Event()
 
-    # ── Helpers de menú ──
+    # ── Menu helpers ──
 
     def _on_dnd(self, minutes: int):
         def _do(icon, item):
@@ -208,20 +207,20 @@ class CCTray:
         self._refresh(icon)
 
     def _on_activate(self, icon, item):
-        """Activa todo: cancela quiet y DND."""
+        """Turn everything back on: cancel quiet and DND."""
         QUIET.unlink(missing_ok=True)
         _cancel_dnd()
         self._refresh(icon)
 
     def _on_config(self, icon, item):
-        """Abre la ventana de configuración como proceso SEPARADO.
+        """Open the settings window as a SEPARATE process.
 
-        El tray (pystray) y la ventana (Tkinter) tienen cada uno su propio
-        mainloop; correrlos en el mismo proceso pelea por el loop. Lanzamos
-        cc_config_gui.py detached con pythonw (sin consola en Windows).
+        The tray (pystray) and the window (Tkinter) each own a mainloop;
+        running them in the same process fights over the loop. We launch
+        cc_config_gui.py detached with pythonw (no console on Windows).
         """
         gui = Path(__file__).resolve().parent / "cc_config_gui.py"
-        # En Windows usamos pythonw.exe (sin ventana de consola) si existe.
+        # On Windows use pythonw.exe (no console window) if it exists.
         exe = sys.executable or "python"
         if sys.platform.startswith("win"):
             pw = exe.replace("python.exe", "pythonw.exe")
@@ -243,14 +242,14 @@ class CCTray:
         self._stop_event.set()
         icon.stop()
 
-    # ── Construcción del menú ──
+    # ── Menu construction ──
 
     def _build_menu(self, state: dict) -> pystray.Menu:
         quiet = state["quiet"]
         dnd_rem = state["dnd_rem"]
         nosound = state["nosound"]
 
-        # Ítem de estado (no clickeable, solo informativo)
+        # Status item (not clickable, informational only)
         status_item = pystray.MenuItem(
             f"{state['symbol']}  {state['label']}",
             None,
@@ -259,36 +258,36 @@ class CCTray:
 
         separator = pystray.Menu.SEPARATOR
 
-        # Acciones de silencio
+        # Silence actions
         if quiet or dnd_rem > 0:
-            toggle_item = pystray.MenuItem("🔔  Activar notificaciones", self._on_activate)
+            toggle_item = pystray.MenuItem("🔔  Resume notifications", self._on_activate)
         else:
-            toggle_item = pystray.MenuItem("🔇  Silencio global", self._on_quiet)
+            toggle_item = pystray.MenuItem("🔇  Global silence", self._on_quiet)
 
-        # Submenú DND
+        # DND submenu
         dnd_submenu = pystray.Menu(
-            pystray.MenuItem("30 minutos",  self._on_dnd(30)),
-            pystray.MenuItem("1 hora",      self._on_dnd(60)),
-            pystray.MenuItem("1.5 horas",   self._on_dnd(90)),
-            pystray.MenuItem("2 horas",     self._on_dnd(120)),
-            pystray.MenuItem("4 horas",     self._on_dnd(240)),
+            pystray.MenuItem("30 minutes",  self._on_dnd(30)),
+            pystray.MenuItem("1 hour",      self._on_dnd(60)),
+            pystray.MenuItem("1.5 hours",   self._on_dnd(90)),
+            pystray.MenuItem("2 hours",     self._on_dnd(120)),
+            pystray.MenuItem("4 hours",     self._on_dnd(240)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "Cancelar DND" if dnd_rem > 0 else "DND inactivo",
+                "Cancel DND" if dnd_rem > 0 else "DND inactive",
                 self._on_dnd_off,
                 enabled=dnd_rem > 0,
             ),
         )
-        dnd_item = pystray.MenuItem("⏳  No Molestar…", dnd_submenu)
+        dnd_item = pystray.MenuItem("⏳  Do Not Disturb…", dnd_submenu)
 
-        # Sonido
-        sound_label = "🔔  Activar sonido" if nosound else "🤫  Silenciar sonido"
+        # Sound
+        sound_label = "🔔  Enable sound" if nosound else "🤫  Mute sound"
         sound_item = pystray.MenuItem(sound_label, self._on_sound)
 
-        # Abrir ventana de configuración (default = doble click en el ícono)
-        config_item = pystray.MenuItem("⚙️  Configuración…", self._on_config, default=True)
+        # Open settings window (default = double-click the icon)
+        config_item = pystray.MenuItem("⚙️  Settings…", self._on_config, default=True)
 
-        quit_item = pystray.MenuItem("✖  Cerrar tray", self._on_quit)
+        quit_item = pystray.MenuItem("✖  Quit tray", self._on_quit)
 
         return pystray.Menu(
             status_item,
@@ -301,7 +300,7 @@ class CCTray:
             quit_item,
         )
 
-    # ── Actualización del ícono ──
+    # ── Icon refresh ──
 
     def _refresh(self, icon: pystray.Icon | None = None) -> None:
         tgt = icon or self._icon
@@ -313,11 +312,11 @@ class CCTray:
         tgt.menu = self._build_menu(state)
 
     def _bg_refresh(self) -> None:
-        """Refresca el ícono cada REFRESH_SECS segundos en background."""
+        """Refresh the icon every REFRESH_SECS seconds in the background."""
         while not self._stop_event.wait(REFRESH_SECS):
             self._refresh()
 
-    # ── Entrada principal ──
+    # ── Entry point ──
 
     def run(self) -> None:
         state = get_state()
@@ -329,7 +328,7 @@ class CCTray:
         )
         self._icon = icon
 
-        # Hilo de refresco automático
+        # Auto-refresh thread
         t = threading.Thread(target=self._bg_refresh, daemon=True)
         t.start()
 
@@ -342,16 +341,16 @@ class CCTray:
 
 def main() -> None:
     import argparse
-    ap = argparse.ArgumentParser(description="CC--VH-lite: tray icon de cc-notify")
+    ap = argparse.ArgumentParser(description="CC--VH-lite: cc-notify tray icon")
     ap.add_argument(
         "--check-deps",
         action="store_true",
-        help="Solo verifica que pystray y pillow estén instalados",
+        help="Just check that pystray and pillow are installed",
     )
     args = ap.parse_args()
 
     if args.check_deps:
-        print("✅ pystray y pillow disponibles.")
+        print("✅ pystray and pillow available.")
         return
 
     CCTray().run()

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-install.py — Instalador de un comando para CC--VH-lite (banners + voz).
+install.py — One-command installer for CC--VH-lite (banners + voice).
 
-Hace todo el trabajo manual que antes pedía el README:
-  - Detecta tu plataforma (macOS / Windows / Linux).
-  - Detecta la ruta de ESTE clon y el intérprete de Python correcto
-    (`python3` en macOS/Linux, `python` en Windows — el que exista en PATH).
-  - FUSIONA los hooks Stop + Notification en tu ~/.claude/settings.json SIN
-    pisar lo que ya tengas (hace backup antes de escribir). Idempotente: puedes
-    correrlo mil veces, no duplica.
-  - Chequea las dependencias opcionales y te dice qué falta.
+Does all the manual work the README used to ask for:
+  - Detects your platform (macOS / Windows / Linux).
+  - Detects THIS clone's path and the right Python interpreter
+    (`python3` on macOS/Linux, `python` on Windows — whichever is on PATH).
+  - MERGES the Stop + Notification hooks into your ~/.claude/settings.json
+    WITHOUT clobbering what you already have (backs up before writing).
+    Idempotent: you can run it a thousand times, it won't duplicate.
+  - Checks the optional dependencies and tells you what's missing.
 
-Uso:
-    python install.py            # instala / actualiza los hooks
-    python install.py --dry-run  # muestra lo que haría, sin escribir nada
-    python install.py --uninstall  # quita SOLO los hooks de este repo
+Usage:
+    python install.py            # install / update the hooks
+    python install.py --dry-run  # show what it would do, without writing anything
+    python install.py --uninstall  # remove ONLY this repo's hooks
 
-Claude Code corre los hooks vía shell POSIX (Git Bash en Windows), por eso las
-rutas se escriben con forward slashes (`D:/...`), que funcionan en ambos.
+Claude Code runs the hooks via a POSIX shell (Git Bash on Windows), which is why
+the paths are written with forward slashes (`D:/...`), which work on both.
 """
 
 import os
@@ -28,7 +28,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-# La consola de Windows usa cp1252 por defecto y truena con emojis/box-drawing.
+# The Windows console defaults to cp1252 and blows up on emojis/box-drawing.
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -44,13 +44,13 @@ VOICE  = HERE / "cc_voice_lite.py"
 TRAY   = HERE / "cc_tray.py"
 SETTINGS = Path.home() / ".claude" / "settings.json"
 EVENTS = ("Stop", "Notification")
-# Marcas para reconocer NUESTROS hooks (de cualquier ruta) y poder re-instalar
-# o desinstalar sin tocar los hooks de otros.
+# Markers to recognize OUR hooks (from any path) so we can re-install or
+# uninstall without touching other people's hooks.
 MARKERS = ("cc_notify.py", "cc_voice_lite.py")
 
 
 def pick_interpreter() -> str:
-    """Nombre del intérprete a poner en el hook: el que exista en PATH."""
+    """Interpreter name to put in the hook: whichever is on PATH."""
     order = ("python", "python3") if IS_WINDOWS else ("python3", "python")
     for cand in order:
         if shutil.which(cand):
@@ -59,7 +59,7 @@ def pick_interpreter() -> str:
 
 
 def hook_command(interp: str, script: Path) -> str:
-    """Comando del hook con ruta POSIX (sirve en Git Bash y en sh)."""
+    """Hook command with a POSIX path (works in Git Bash and in sh)."""
     p = script.as_posix()
     if " " in p:
         p = f'"{p}"'
@@ -67,7 +67,7 @@ def hook_command(interp: str, script: Path) -> str:
 
 
 def build_block(interp: str) -> dict:
-    """El bloque {event: [ {hooks:[...]} ]} con nuestros dos scripts."""
+    """The {event: [ {hooks:[...]} ]} block with our two scripts."""
     entry = {
         "hooks": [
             {"type": "command", "command": hook_command(interp, NOTIFY)},
@@ -78,7 +78,7 @@ def build_block(interp: str) -> dict:
 
 
 def is_ours(entry: dict) -> bool:
-    """True si esta entrada de hook apunta a nuestros scripts (cualquier ruta)."""
+    """True if this hook entry points at our scripts (any path)."""
     for h in entry.get("hooks", []):
         cmd = h.get("command", "")
         if any(m in cmd for m in MARKERS):
@@ -92,18 +92,18 @@ def load_settings() -> dict:
     try:
         return json.loads(SETTINGS.read_text(encoding="utf-8")) or {}
     except (OSError, json.JSONDecodeError) as e:
-        print(f"⚠️  No pude leer {SETTINGS}: {e}")
-        print("    Aborto para no corromper tu config. Arréglalo y reintenta.")
+        print(f"⚠️  Couldn't read {SETTINGS}: {e}")
+        print("    Aborting to avoid corrupting your config. Fix it and retry.")
         sys.exit(1)
 
 
 def merge(settings: dict, block: dict) -> dict:
-    """Inserta nuestros hooks quitando primero CUALQUIER versión previa nuestra
-    (idempotente + maneja re-clones a otra ruta). Respeta hooks ajenos."""
+    """Insert our hooks, first removing ANY previous version of ours
+    (idempotent + handles re-clones to a different path). Respects others' hooks."""
     hooks = settings.setdefault("hooks", {})
     for ev, entries in block.items():
         existing = hooks.get(ev, [])
-        # quita nuestras entradas viejas, conserva las de otros
+        # remove our old entries, keep everyone else's
         kept = [e for e in existing if not is_ours(e)]
         hooks[ev] = kept + entries
     return settings
@@ -128,7 +128,7 @@ def write_settings(settings: dict) -> None:
         print(f"📦 Backup: {backup}")
     SETTINGS.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
                         encoding="utf-8")
-    print(f"✅ Escrito: {SETTINGS}")
+    print(f"✅ Wrote: {SETTINGS}")
 
 
 def _has_module(name: str) -> bool:
@@ -137,44 +137,44 @@ def _has_module(name: str) -> bool:
 
 
 def check_deps() -> None:
-    print("\n── Dependencias ──")
+    print("\n── Dependencies ──")
     ok, opt = "✅", "·"
 
     azure = (Path.home() / ".secrets" / "azure-openai-key.txt").exists()
     print(f"  {ok if azure else opt} Azure TTS key (~/.secrets/azure-openai-key.txt) "
-          f"{'sí' if azure else 'no — voz de pago, opcional'}")
+          f"{'yes' if azure else 'no — paid voice, optional'}")
 
     edge = shutil.which("edge-tts") is not None
-    print(f"  {ok if edge else opt} edge-tts (voz neural GRATIS) "
-          f"{'sí' if edge else 'no — instala con: pip install edge-tts'}")
+    print(f"  {ok if edge else opt} edge-tts (FREE neural voice) "
+          f"{'yes' if edge else 'no — install with: pip install edge-tts'}")
 
     # Tray icon
     has_pystray = _has_module("pystray")
     has_pillow  = _has_module("PIL")
     tray_ok = has_pystray and has_pillow
     if tray_ok:
-        print(f"  {ok} pystray + pillow — tray icon disponible (python cc_tray.py)")
+        print(f"  {ok} pystray + pillow — tray icon available (python cc_tray.py)")
     else:
         missing = []
         if not has_pystray:
             missing.append("pystray")
         if not has_pillow:
             missing.append("pillow")
-        print(f"  {opt} tray icon (opcional) — falta: pip install {' '.join(missing)}")
+        print(f"  {opt} tray icon (optional) — missing: pip install {' '.join(missing)}")
 
-    # Ventana de config (cross-platform). Tkinter viene incluido → siempre corre.
+    # Config window (cross-platform). Tkinter is bundled → always runs.
     has_tk  = _has_module("tkinter")
     has_ctk = _has_module("customtkinter")
     if has_ctk:
-        print(f"  {ok} ventana de config (CustomTkinter, look moderno) — python cc_config_gui.py")
+        print(f"  {ok} config window (CustomTkinter, modern look) — python cc_config_gui.py")
     elif has_tk:
-        print(f"  {ok} ventana de config (Tkinter incluido) — python cc_config_gui.py · look bonito: pip install customtkinter")
+        print(f"  {ok} config window (Tkinter bundled) — python cc_config_gui.py · nicer look: pip install customtkinter")
     else:
-        print(f"  {opt} ventana de config — tkinter ausente (raro); CustomTkinter: pip install customtkinter")
+        print(f"  {opt} config window — tkinter missing (rare); CustomTkinter: pip install customtkinter")
 
     if IS_WINDOWS:
         ps = shutil.which("powershell") is not None
-        print(f"  {ok if ps else '❌'} powershell {'sí' if ps else 'NO — requerido para banners y voz'}")
+        print(f"  {ok if ps else '❌'} powershell {'yes' if ps else 'NO — required for banners and voice'}")
         bt = False
         if ps:
             try:
@@ -185,55 +185,55 @@ def check_deps() -> None:
                 bt = r.stdout.strip() == "yes"
             except Exception:
                 pass
-        print(f"  {ok if bt else opt} BurntToast {'sí' if bt else 'no — banners caen a WinRT (cero deps); para la rama bonita: Install-Module BurntToast'}")
+        print(f"  {ok if bt else opt} BurntToast {'yes' if bt else 'no — banners fall back to WinRT (zero deps); for the nicer path: Install-Module BurntToast'}")
     elif IS_MAC:
         tn = shutil.which("terminal-notifier") is not None
         hs = shutil.which("hs") is not None
-        print(f"  {ok if tn else opt} terminal-notifier {'sí' if tn else 'no — opcional (osascript de fallback)'}")
-        print(f"  {ok if hs else opt} Hammerspoon (hs) {'sí' if hs else 'no — opcional (banner con botón)'}")
+        print(f"  {ok if tn else opt} terminal-notifier {'yes' if tn else 'no — optional (osascript fallback)'}")
+        print(f"  {ok if hs else opt} Hammerspoon (hs) {'yes' if hs else 'no — optional (banner with a button)'}")
     else:
-        print(f"  {opt} Linux: cc_notify usa rutas macOS; los banners no aplican. La voz sí (edge-tts/say-equiv).")
+        print(f"  {opt} Linux: cc_notify uses macOS paths; the banners don't apply. The voice does (edge-tts/say-equiv).")
 
 
 def _tray_autostart_path() -> Path:
-    """Carpeta Startup de Windows (corre al iniciar sesión)."""
+    """Windows Startup folder (runs at login)."""
     appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
 def tray_autostart_install(interp: str) -> None:
-    """Crea un .vbs en Startup para lanzar cc_tray.py sin ventana de consola.
+    """Create a .vbs in Startup to launch cc_tray.py with no console window.
 
-    Robusto con espacios en la ruta: entrecomilla intérprete y script (en VBS
-    las comillas se escapan duplicándolas → `""`). Usa la ruta ABSOLUTA del
-    intérprete (sys.executable), no el nombre `python`, porque el PATH del
-    proceso de login puede diferir del PATH del shell donde se instaló.
+    Robust against spaces in the path: quotes the interpreter and script (in VBS
+    quotes are escaped by doubling them → `""`). Uses the ABSOLUTE interpreter
+    path (sys.executable), not the bare `python` name, because the login
+    process's PATH can differ from the shell's PATH where it was installed.
     """
     if not IS_WINDOWS:
-        print("ℹ️  Autostart de tray solo aplica en Windows.")
+        print("ℹ️  Tray autostart only applies on Windows.")
         return
     startup = _tray_autostart_path()
     startup.mkdir(parents=True, exist_ok=True)
     vbs = startup / "cc_tray.vbs"
 
-    # Ruta absoluta del intérprete (cae al nombre solo si sys.executable falta).
+    # Absolute interpreter path (falls back to the name only if sys.executable is missing).
     py = sys.executable or interp
     script = str(TRAY)
 
     def _vbs_quote(s: str) -> str:
-        # Comilla VBS: " interna → "" ; envuelto en comillas para el shell.
+        # VBS quoting: inner " → "" ; wrapped in quotes for the shell.
         return '""' + s.replace('"', '""') + '""'
 
     cmd = f"{_vbs_quote(py)} {_vbs_quote(script)}"
-    # wscript.exe corre el comando con Run sin ventana (0 = oculto, False = no esperar)
+    # wscript.exe runs the command with Run windowless (0 = hidden, False = don't wait)
     vbs_content = (
         'Set WShell = CreateObject("WScript.Shell")\r\n'
         f'WShell.Run "{cmd}", 0, False\r\n'
     )
     vbs.write_text(vbs_content, encoding="utf-8")
-    print(f"✅ Autostart creado: {vbs}")
-    print("   El tray icon arrancará automáticamente al iniciar Windows.")
-    print("   Para quitarlo: python install.py --tray-autostart-remove")
+    print(f"✅ Autostart created: {vbs}")
+    print("   The tray icon will launch automatically at Windows startup.")
+    print("   To remove it: python install.py --tray-autostart-remove")
 
 
 def tray_autostart_remove() -> None:
@@ -242,23 +242,23 @@ def tray_autostart_remove() -> None:
     vbs = _tray_autostart_path() / "cc_tray.vbs"
     if vbs.exists():
         vbs.unlink()
-        print(f"🗑️  Autostart eliminado: {vbs}")
+        print(f"🗑️  Autostart removed: {vbs}")
     else:
-        print("No había autostart de tray instalado.")
+        print("No tray autostart was installed.")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Instalador de CC--VH-lite")
-    ap.add_argument("--dry-run", action="store_true", help="muestra sin escribir")
-    ap.add_argument("--uninstall", action="store_true", help="quita solo nuestros hooks")
+    ap = argparse.ArgumentParser(description="CC--VH-lite installer")
+    ap.add_argument("--dry-run", action="store_true", help="show without writing")
+    ap.add_argument("--uninstall", action="store_true", help="remove only our hooks")
     ap.add_argument("--tray-autostart", action="store_true",
-                    help="(Windows) instala cc_tray.py en el Startup")
+                    help="(Windows) install cc_tray.py into Startup")
     ap.add_argument("--tray-autostart-remove", action="store_true",
-                    help="(Windows) quita el autostart del tray")
+                    help="(Windows) remove the tray autostart")
     args = ap.parse_args()
 
     if not NOTIFY.exists() or not VOICE.exists():
-        print(f"❌ No encuentro los scripts en {HERE}. ¿Corres esto desde el clon?")
+        print(f"❌ Can't find the scripts in {HERE}. Are you running this from the clone?")
         sys.exit(1)
 
     interp = pick_interpreter()
@@ -275,7 +275,7 @@ def main() -> None:
 
     if args.uninstall:
         settings = remove_ours(settings)
-        print("🗑️  Quitando hooks de CC--VH-lite.")
+        print("🗑️  Removing CC--VH-lite hooks.")
         if args.dry_run:
             print(json.dumps(settings.get("hooks", {}), indent=2, ensure_ascii=False))
         else:
@@ -283,20 +283,20 @@ def main() -> None:
         return
 
     block = build_block(interp)
-    print(f"Plataforma : {'Windows' if IS_WINDOWS else 'macOS' if IS_MAC else 'Linux'}")
-    print(f"Intérprete : {interp}")
-    print(f"Scripts    : {HERE.as_posix()}")
-    print(f"Eventos    : {', '.join(EVENTS)}")
+    print(f"Platform    : {'Windows' if IS_WINDOWS else 'macOS' if IS_MAC else 'Linux'}")
+    print(f"Interpreter : {interp}")
+    print(f"Scripts     : {HERE.as_posix()}")
+    print(f"Events      : {', '.join(EVENTS)}")
 
     merged = merge(settings, block)
     if args.dry_run:
-        print("\n── settings.json resultante (dry-run, NO escrito) ──")
+        print("\n── resulting settings.json (dry-run, NOT written) ──")
         print(json.dumps(merged, indent=2, ensure_ascii=False))
     else:
         write_settings(merged)
 
     check_deps()
-    print("\n🔁 Reinicia Claude Code para que tome los hooks.")
+    print("\n🔁 Restart Claude Code so it picks up the hooks.")
 
 
 if __name__ == "__main__":

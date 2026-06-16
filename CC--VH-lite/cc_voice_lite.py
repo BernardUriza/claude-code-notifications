@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-CC--VH-lite — voz ONYX para Claude Code (reconstruida 2026-06-03).
+CC--VH-lite — ONYX voice for Claude Code (rebuilt 2026-06-03).
 
-SOLO Azure OpenAI TTS, voz onyx. Sin Arbor (la voz culera que se colgaba
-30s y no se podía detener) y sin servicio local. Habla un fragmento de lo
-que dijo Claude Code, en segundo plano (detached), sin bloquear a Claude.
+Azure OpenAI TTS, onyx voice ONLY. No Arbor (the nasty voice that hung for 30s
+and couldn't be stopped) and no local service. Speaks a snippet of what Claude
+Code said, in the background (detached), without blocking Claude.
 
-Respeta el silencio de cc-notify: si existe ~/.cc-notify/quiet o
-~/.cc-voice-off, NO habla (el .py se lee fresco en cada hook, así que
-`ccn quiet` la calla sin reiniciar Claude Code).
+Respects cc-notify's silence: if ~/.cc-notify/quiet or ~/.cc-voice-off exists,
+it does NOT speak (the .py is read fresh on every hook, so `ccn quiet` mutes it
+without restarting Claude Code).
 
-Eventos:
-    - Stop / SubagentStop → última respuesta de Claude (del transcript .jsonl)
-    - Notification        → el texto de la notificación (campo "message")
+Events:
+    - Stop / SubagentStop → Claude's last response (from the .jsonl transcript)
+    - Notification        → the notification text (the "message" field)
 
-Config: ~/.secrets/azure-openai-key.txt (archivo de notas con la línea
-    AZURE_OPENAI_TTS_KEY: <key>, más Endpoint/Deployment/API-Version).
+Config: ~/.secrets/azure-openai-key.txt (a notes file with the line
+    AZURE_OPENAI_TTS_KEY: <key>, plus Endpoint/Deployment/API-Version).
 
-Prueba manual:
-    python3 cc_voice_lite.py --say "Probando la voz onyx"
+Manual test:
+    python3 cc_voice_lite.py --say "Testing the onyx voice"
 """
 
 import os
@@ -33,22 +33,22 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# ── Config Azure OpenAI TTS (onyx) ──
+# ── Azure OpenAI TTS config (onyx) ──
 SECRET_FILE = Path.home() / ".secrets" / "azure-openai-key.txt"
 
 IS_WINDOWS = sys.platform.startswith("win")
 
-# Fallback local de Windows (SAPI vía System.Speech). Voz vacía = la default del
-# sistema. Lista las instaladas con:
+# Windows local fallback (SAPI via System.Speech). Empty voice = the system
+# default. List the installed ones with:
 #   powershell "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices().VoiceInfo.Name"
 WIN_SAY_VOICE = os.environ.get("WIN_SAY_VOICE", "")
 
 
 def _cfg(name: str, default: str = "") -> str:
-    """Lee 'name: valor' (o 'name=valor') del archivo de notas de secretos.
+    """Read 'name: value' (or 'name=value') from the secrets notes file.
 
-    Toma el primer token del valor (corta comentarios tipo '(verified ...)').
-    Las variables de entorno tienen prioridad.
+    Takes the first token of the value (cuts comments like '(verified ...)').
+    Environment variables take priority.
     """
     env = os.environ.get(name)
     if env:
@@ -66,10 +66,10 @@ AZURE_ENDPOINT = _cfg("Endpoint", "https://northcentralus.api.cognitive.microsof
 AZURE_DEPLOYMENT = _cfg("Deployment", "tts")
 AZURE_API_VERSION = _cfg("API-Version", "2024-02-15-preview")
 
-# Config compartida (~/.cc-notify/config.json): voz, min_words, etc.
-# Usamos load_raw() (SOLO lo presente en el archivo) para no dejar que un
-# default del config pise una fuente de menor prioridad (p. ej. `Voice:` del
-# secrets file). Si cc_config no importa, _RAW vacío → todo cae a defaults.
+# Shared config (~/.cc-notify/config.json): voice, min_words, etc.
+# We use load_raw() (ONLY what's present in the file) so a config default
+# doesn't clobber a lower-priority source (e.g. `Voice:` from the secrets file).
+# If cc_config doesn't import, _RAW is empty → everything falls back to defaults.
 try:
     import cc_config
     _RAW = cc_config.load_raw()
@@ -79,7 +79,7 @@ except Exception:
 
 
 def _conf(key, default):
-    """Valor del config.json (archivo), casteado; default si ausente/basura."""
+    """Value from config.json (file), coerced; default if missing/garbage."""
     if cc_config is not None and key in _RAW:
         c = cc_config._coerce(key, _RAW[key])
         if c is not None:
@@ -87,24 +87,25 @@ def _conf(key, default):
     return default
 
 
-# Voz OpenAI (alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer).
-# Prioridad REAL: env AZURE_TTS_VOICE > config.json `voice` > secrets `Voice:` > onyx.
-# `_conf("voice", None)` devuelve None si la clave NO está en el archivo, así
-# `or` cae al secrets file en vez de pisarlo con un default.
+# OpenAI voice (alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer).
+# REAL priority: env AZURE_TTS_VOICE > config.json `voice` > secrets `Voice:` > onyx.
+# `_conf("voice", None)` returns None if the key is NOT in the file, so the
+# `or` falls back to the secrets file instead of clobbering it with a default.
 AZURE_VOICE = (_cfg("AZURE_TTS_VOICE") or _conf("voice", None)
                or _cfg("Voice") or "onyx")
 
-# ── edge-tts: voz neural GRATIS, sin API key (Microsoft Edge TTS) ──
-# Camino intermedio entre Azure (de pago, requiere key) y la voz local robótica.
-# Instálalo con `pip install edge-tts`. Lista voces con `edge-tts --list-voices`.
+# ── edge-tts: FREE neural voice, no API key (Microsoft Edge TTS) ──
+# A middle ground between Azure (paid, needs a key) and the robotic local voice.
+# Install it with `pip install edge-tts`. List voices with `edge-tts --list-voices`.
 EDGE_VOICE = os.environ.get("EDGE_TTS_VOICE", "es-MX-DaliaNeural")
 
-# Fallback último recurso: voz local `say` de macOS (instantánea, gratis).
+# Last-resort fallback: the macOS local `say` voice (instant, free).
 SAY_VOICE = os.environ.get("SAY_VOICE", "Paulina")
 
-# ── Selección de fragmento (configurable vía config.json) ──
-# _conf ya castea y cae a default si el valor es basura → un config.json
-# editado a mano con tipos inválidos NO truena el script en import-time.
+# ── Snippet selection (configurable via config.json) ──
+# _conf already coerces and falls back to the default if the value is garbage →
+# a hand-edited config.json with invalid types does NOT crash the script at
+# import time.
 MIN_WORDS = _conf("min_words", 30)
 MAX_RATIO = 0.5
 MAX_CHARS = _conf("max_chars_speech", 600)
@@ -113,7 +114,7 @@ SENTENCE_END = ".!?…"
 
 
 def _play_audio_file(path: str) -> None:
-    """Reproduce un archivo de audio de forma bloqueante, según la plataforma."""
+    """Play an audio file in a blocking way, per platform."""
     if IS_WINDOWS:
         ps = (
             "Add-Type -AssemblyName presentationCore;"
@@ -136,7 +137,7 @@ def _play_audio_file(path: str) -> None:
 
 
 def _say_local(text: str) -> None:
-    """Voz local (último recurso): SAPI en Windows, `say` en macOS."""
+    """Local voice (last resort): SAPI on Windows, `say` on macOS."""
     try:
         if IS_WINDOWS:
             env = os.environ.copy()
@@ -159,10 +160,10 @@ def _say_local(text: str) -> None:
 
 
 def _edge_tts_to_file(text: str, out_path: str) -> bool:
-    """Genera mp3 con edge-tts (neural, gratis, sin key). True si lo logró.
+    """Generate an mp3 with edge-tts (neural, free, no key). True if it worked.
 
-    Requiere `pip install edge-tts` (no viene en stdlib). El texto va por arg de
-    subprocess (lista, sin shell) así que no hay problemas de escaping.
+    Requires `pip install edge-tts` (not in stdlib). The text goes through a
+    subprocess arg (list, no shell) so there are no escaping problems.
     """
     exe = shutil.which("edge-tts")
     if not exe:
@@ -178,12 +179,12 @@ def _edge_tts_to_file(text: str, out_path: str) -> bool:
 
 
 def speak_blocking(text: str, voice: str) -> None:
-    """Genera el audio y lo reproduce (afplay en macOS, MediaPlayer en Windows).
+    """Generate the audio and play it (afplay on macOS, MediaPlayer on Windows).
 
-    Cadena de fallback, de mejor a más simple:
-      1. Azure OpenAI TTS onyx (si hay key en ~/.secrets).
-      2. edge-tts (neural, gratis, sin key — si está instalado).
-      3. Voz local offline (SAPI en Windows, `say` en macOS).
+    Fallback chain, from best to simplest:
+      1. Azure OpenAI TTS onyx (if there's a key in ~/.secrets).
+      2. edge-tts (neural, free, no key — if it's installed).
+      3. Offline local voice (SAPI on Windows, `say` on macOS).
     """
     if AZURE_KEY:
         try:
@@ -214,8 +215,8 @@ def speak_blocking(text: str, voice: str) -> None:
                         pass
                 return
         except Exception:
-            pass  # cae al siguiente nivel
-    # 2º: edge-tts (neural, gratis, sin key) si está instalado.
+            pass  # fall to the next level
+    # 2nd: edge-tts (neural, free, no key) if it's installed.
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fh:
             edge_mp3 = fh.name
@@ -233,20 +234,20 @@ def speak_blocking(text: str, voice: str) -> None:
         except OSError:
             pass
     except Exception:
-        pass  # cae al fallback local
-    # 3º: voz local offline (SAPI en Windows, `say` en macOS).
+        pass  # fall to the local fallback
+    # 3rd: offline local voice (SAPI on Windows, `say` on macOS).
     _say_local(text)
 
 
 def speak_detached(text: str, voice: str) -> None:
-    """Habla en segundo plano y NO bloquea a Claude Code.
+    """Speak in the background and do NOT block Claude Code.
 
-    Re-invoca este script con --speak-now en un proceso desacoplado, así Claude
-    no espera a que termine el audio ni lo corta al salir:
+    Re-invokes this script with --speak-now in a detached process, so Claude
+    doesn't wait for the audio to finish nor cut it off on exit:
       - macOS:   start_new_session=True (POSIX).
-      - Windows: DETACHED_PROCESS, sin ventana de consola.
-    El proceso hijo corre speak_blocking (Azure onyx + reproducción/fallback
-    según plataforma).
+      - Windows: DETACHED_PROCESS, no console window.
+    The child process runs speak_blocking (Azure onyx + playback/fallback per
+    platform).
     """
     popen_kwargs: dict = dict(
         stdin=subprocess.DEVNULL,
@@ -268,7 +269,7 @@ def speak_detached(text: str, voice: str) -> None:
 
 
 def read_payload(cli_hook):
-    """Lee el JSON de stdin. Devuelve (evento, data)."""
+    """Read the JSON from stdin. Returns (event, data)."""
     data = {}
     try:
         raw = sys.stdin.read()
@@ -280,10 +281,10 @@ def read_payload(cli_hook):
 
 
 def last_assistant_text(transcript_path: str):
-    """Saca el texto de la última respuesta de Claude del transcript .jsonl.
+    """Pull the text of Claude's last response from the .jsonl transcript.
 
-    Recorre de atrás hacia adelante buscando type='assistant' y los bloques
-    de message.content con type='text'.
+    Walks backwards looking for type='assistant' and the message.content blocks
+    with type='text'.
     """
     try:
         lines = Path(transcript_path).read_text(encoding="utf-8").splitlines()
@@ -312,22 +313,22 @@ def last_assistant_text(transcript_path: str):
 
 
 def clean_for_speech(text: str) -> str:
-    """Quita markdown y código pa' que la voz no lea símbolos raros."""
+    """Strip markdown and code so the voice doesn't read weird symbols."""
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"`[^`]*`", " ", text)
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # links markdown
-    text = re.sub(r"[*_`#>~|]", " ", text)                # símbolos markdown
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # markdown links
+    text = re.sub(r"[*_`#>~|]", " ", text)                # markdown symbols
     text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", " ", text)  # emojis
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 def pick_words(text: str) -> str:
-    """Al menos MIN_WORDS palabras, terminando la oración en curso.
+    """At least MIN_WORDS words, finishing the current sentence.
 
-    La oración manda: puede rebasar el mínimo. Si el texto es más corto que
-    el mínimo, lo dice todo. MAX_RATIO es red de seguridad cuando no hay
-    puntuación.
+    The sentence wins: it may exceed the minimum. If the text is shorter than
+    the minimum, it says all of it. MAX_RATIO is a safety net when there's no
+    punctuation.
     """
     if not text:
         return ""
@@ -335,7 +336,7 @@ def pick_words(text: str) -> str:
     total = len(words)
     if total <= MIN_WORDS:
         return text.strip(" \")’'»")[:MAX_CHARS]
-    # Busca el primer fin de oración después del mínimo.
+    # Find the first sentence end after the minimum.
     cut = None
     for i in range(MIN_WORDS, total):
         if words[i] and words[i][-1] in SENTENCE_END:
@@ -347,20 +348,20 @@ def pick_words(text: str) -> str:
 
 
 def project_name(data: dict):
-    """Nombre del repo/folder: basename del cwd que manda el hook."""
+    """Repo/folder name: basename of the cwd the hook sends."""
     cwd = data.get("cwd")
     return Path(cwd).name if cwd else None
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CC--VH-lite: voz onyx pa' Claude Code")
-    parser.add_argument("--hook", help="Forzar evento (Stop, Notification, ...)")
-    parser.add_argument("--say", help="Habla este texto y sale (modo prueba)")
-    parser.add_argument("--speak-now", help="(interno) proceso detached que habla")
+    parser = argparse.ArgumentParser(description="CC--VH-lite: onyx voice for Claude Code")
+    parser.add_argument("--hook", help="Force event (Stop, Notification, ...)")
+    parser.add_argument("--say", help="Speak this text and exit (test mode)")
+    parser.add_argument("--speak-now", help="(internal) detached process that speaks")
     parser.add_argument("--voice", default=AZURE_VOICE)
     args = parser.parse_args()
 
-    # Modo interno: el proceso detached que realmente habla.
+    # Internal mode: the detached process that actually speaks.
     if args.speak_now is not None:
         try:
             speak_blocking(args.speak_now, args.voice)
@@ -368,17 +369,17 @@ def main() -> None:
             pass
         return
 
-    # Modo prueba manual.
+    # Manual test mode.
     if args.say:
         speak_detached(args.say, args.voice)
         return
 
-    # El payload trae el session_id, necesario para el mute por sesión.
+    # The payload carries the session_id, needed for per-session mute.
     event, data = read_payload(args.hook)
 
-    # Interruptor de silencio: la voz respeta lo MISMO que el banner (cc_notify):
-    # quiet global, ~/.cc-voice-off, DND con timer y mute por sesión. Si el payload
-    # no trae session_id, solo se omite el check de mute por sesión.
+    # Silence switch: the voice respects the SAME things as the banner (cc_notify):
+    # global quiet, ~/.cc-voice-off, DND timer, and per-session mute. If the payload
+    # has no session_id, only the per-session mute check is skipped.
     state = Path.home() / ".cc-notify"
     dnd_active = False
     if (state / "dnd").exists():

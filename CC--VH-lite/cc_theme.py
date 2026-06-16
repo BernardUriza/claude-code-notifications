@@ -1,52 +1,52 @@
 #!/usr/bin/env python3
 """
-cc_theme.py — Branding compartido de CC--VH-lite (paleta + isotipo).
+cc_theme.py — Shared branding for CC--VH-lite (palette + isotype).
 
-Una sola fuente de verdad para la identidad visual: la paleta "dev-tool DNA"
-y el isotipo (hexágono + C + bocina) dibujado en código con Pillow, así que
-escala nítido a CUALQUIER tamaño (16/32 px de bandeja, 64 del header) sin
-arrastrar archivos .ico/.png.
+A single source of truth for the visual identity: the "dev-tool DNA" palette
+and the isotype (hexagon + C + speaker) drawn in code with Pillow, so it scales
+crisp at ANY size (16/32 px tray, 64 px header) without shipping .ico/.png
+files.
 
-Usado por cc_tray.py (íconos de bandeja por estado) y cc_config_gui.py
-(logo del header). Si Pillow no está, todo lo de imagen degrada a None y los
-consumidores caen a su fallback.
+Used by cc_tray.py (per-state tray icons) and cc_config_gui.py (header logo).
+If Pillow is missing, everything image-related degrades to None and the
+consumers fall back.
 
-── Paleta (del mockup de branding) ──
-    Background  #1e1e24   深い炭黒   charcoal profundo
-    Accent      #00bfff   電気青     azul eléctrico
-    Status      #3ebf9b   ミント     verde menta
-    Text        #d1d1d1   柔灰       gris suave
+── Palette (from the branding mockup) ──
+    Background  #1e1e24   deep charcoal
+    Accent      #00bfff   electric blue
+    Status      #3ebf9b   mint green
+    Text        #d1d1d1   soft gray
 """
 
 import math
 
-# ── Paleta ───────────────────────────────────────────────────────────────────
-BG        = "#1e1e24"   # fondo principal (deep charcoal)
-BG_CARD   = "#26262e"   # superficies elevadas (cards, secciones)
-BG_INPUT  = "#2d2d37"   # inputs, tracks de slider apagados
-ACCENT    = "#00bfff"   # azul eléctrico — acción / activo
-ACCENT_HI = "#33ccff"   # hover del accent
-ACCENT_LO = "#0a7fb0"   # accent presionado / borde
-STATUS    = "#3ebf9b"   # verde menta — DND / estado ok
+# ── Palette ──────────────────────────────────────────────────────────────────
+BG        = "#1e1e24"   # main background (deep charcoal)
+BG_CARD   = "#26262e"   # elevated surfaces (cards, sections)
+BG_INPUT  = "#2d2d37"   # inputs, dimmed slider tracks
+ACCENT    = "#00bfff"   # electric blue — action / active
+ACCENT_HI = "#33ccff"   # accent hover
+ACCENT_LO = "#0a7fb0"   # accent pressed / border
+STATUS    = "#3ebf9b"   # mint green — DND / ok state
 STATUS_LO = "#2c8a70"
-TEXT      = "#d1d1d1"   # texto principal
-TEXT_DIM  = "#8b8b94"   # texto secundario / deshabilitado
-BORDER    = "#3a3a45"   # bordes sutiles
-DANGER    = "#ef5b6b"   # mute / cancelar / tachado
+TEXT      = "#d1d1d1"   # main text
+TEXT_DIM  = "#8b8b94"   # secondary / disabled text
+BORDER    = "#3a3a45"   # subtle borders
+DANGER    = "#ef5b6b"   # mute / cancel / strikethrough
 
-# Tipografía monospace (cae a la genérica del SO si no existe la preferida).
+# Monospace typography (falls back to the OS generic if the preferred one is missing).
 MONO_STACK = ("JetBrains Mono", "Cascadia Code", "Consolas", "Menlo",
               "DejaVu Sans Mono", "monospace")
 
-# Colores del isotipo por estado del tray.
+# Isotype colors by tray state.
 STATE_COLORS = {
-    "active": ACCENT,      # notificando
-    "dnd":    STATUS,      # No Molestar (con zZ)
-    "muted":  TEXT_DIM,    # silencio global / sin sonido (con ×)
-    "idle":   "#4a4a55",   # sin sesiones (apagado)
+    "active": ACCENT,      # notifying
+    "dnd":    STATUS,      # Do Not Disturb (with zZ)
+    "muted":  TEXT_DIM,    # global silence / no sound (with ×)
+    "idle":   "#4a4a55",   # no sessions (off)
 }
 
-# ── Pillow opcional ───────────────────────────────────────────────────────────
+# ── Optional Pillow ──────────────────────────────────────────────────────────
 try:
     from PIL import Image, ImageDraw
     _HAS_PIL = True
@@ -60,7 +60,7 @@ def _hex(color: str) -> tuple[int, int, int]:
 
 
 def _hexagon(cx: float, cy: float, r: float, flat_top: bool = True):
-    """6 vértices de un hexágono centrado en (cx, cy) con radio r."""
+    """6 vertices of a hexagon centered at (cx, cy) with radius r."""
     off = 0 if flat_top else 30
     return [
         (cx + r * math.cos(math.radians(60 * i + off)),
@@ -71,16 +71,15 @@ def _hexagon(cx: float, cy: float, r: float, flat_top: bool = True):
 
 def draw_logo(size: int, *, variant: str = "active",
               gradient: bool = False):
-    """Dibuja el isotipo CC--VH-lite a `size` px. Devuelve PIL.Image o None.
+    """Draw the CC--VH-lite isotype at `size` px. Returns PIL.Image or None.
 
-    `variant`: 'active' | 'dnd' | 'muted' | 'idle' — define color y overlay
-    (× para muted, zZ para dnd). `gradient`: si True, tiñe el trazo con un
-    degradado cyan→mint (para el header grande); si False usa color sólido del
-    estado (mejor para los íconos chicos de bandeja, donde importa el color
-    semántico).
+    `variant`: 'active' | 'dnd' | 'muted' | 'idle' — sets color and overlay
+    (× for muted, zZ for dnd). `gradient`: if True, tints the stroke with a
+    cyan→mint gradient (for the large header); if False uses the state's solid
+    color (better for the small tray icons, where the semantic color matters).
 
-    Se dibuja con supersampling ×8 y se reduce con LANCZOS → bordes suaves
-    incluso a 16 px.
+    Drawn with 8x supersampling and downscaled with LANCZOS → smooth edges even
+    at 16 px.
     """
     if not _HAS_PIL:
         return None
@@ -94,25 +93,25 @@ def draw_logo(size: int, *, variant: str = "active",
     rgb = _hex(color)
     cx = cy = S / 2
 
-    # ── Hexágono contenedor (flat-top) ──
+    # ── Container hexagon (flat-top) ──
     hex_r = S * 0.44
     hex_w = max(2, int(S * 0.085))
     d.polygon(_hexagon(cx, cy, hex_r), outline=rgb + (255,), width=hex_w)
 
-    # ── "C" abierta a la derecha (Claude Code) ──
+    # ── "C" open to the right (Claude Code) ──
     c_r = S * 0.24
     c_w = max(2, int(S * 0.105))
     c_box = [cx - c_r, cy - c_r, cx + c_r, cy + c_r]
-    # PIL arc: 0°=3-en-punto, sentido horario. 50→310 deja abierto el sector
-    # derecho → forma de C que mira a la bocina.
+    # PIL arc: 0°=3-o'clock, clockwise. 50→310 leaves the right sector open
+    # → a C shape facing the speaker.
     d.arc(c_box, start=50, end=310, fill=rgb + (255,), width=c_w)
 
-    # ── Bocina (speaker) en la abertura de la C ──
+    # ── Speaker in the C's opening ──
     sp_x = cx + S * 0.085
     sp_y = cy
-    bw = S * 0.075   # ancho cuerpo
-    bh = S * 0.085   # medio-alto cono
-    # cuerpo rectangular + cono triangular
+    bw = S * 0.075   # body width
+    bh = S * 0.085   # half-height of the cone
+    # rectangular body + triangular cone
     d.rectangle([sp_x - bw, sp_y - bh * 0.45, sp_x - bw * 0.3, sp_y + bh * 0.45],
                 fill=rgb + (255,))
     d.polygon([(sp_x - bw * 0.3, sp_y - bh * 0.45),
@@ -121,9 +120,9 @@ def draw_logo(size: int, *, variant: str = "active",
                (sp_x - bw * 0.3, sp_y + bh * 0.45)],
               fill=rgb + (255,))
 
-    # ── Overlays de estado ──
+    # ── State overlays ──
     if variant == "muted":
-        # × roja sobre la bocina (sonido cortado)
+        # red × over the speaker (sound cut)
         xr = S * 0.10
         xc, yc = sp_x + S * 0.04, sp_y
         xw = max(2, int(S * 0.05))
@@ -131,7 +130,7 @@ def draw_logo(size: int, *, variant: str = "active",
         d.line([(xc - xr, yc - xr), (xc + xr, yc + xr)], fill=dr + (255,), width=xw)
         d.line([(xc - xr, yc + xr), (xc + xr, yc - xr)], fill=dr + (255,), width=xw)
     elif variant == "dnd":
-        # "zZ" arriba-derecha (durmiendo)
+        # "zZ" top-right (sleeping)
         zc = _hex(STATUS)
         zw = max(2, int(S * 0.028))
         def _z(ox, oy, s):
@@ -148,7 +147,7 @@ def draw_logo(size: int, *, variant: str = "active",
 
 
 def _apply_gradient(mask_img, top_color: str, bottom_color: str):
-    """Tiñe los píxeles opacos de mask_img con un degradado vertical."""
+    """Tint the opaque pixels of mask_img with a vertical gradient."""
     S = mask_img.size[0]
     top, bot = _hex(top_color), _hex(bottom_color)
     grad = Image.new("RGBA", (S, S))
@@ -160,7 +159,7 @@ def _apply_gradient(mask_img, top_color: str, bottom_color: str):
         b = int(top[2] + (bot[2] - top[2]) * t)
         for x in range(S):
             gp[x, y] = (r, g, b, 255)
-    # usa el alpha del logo como máscara
+    # use the logo's alpha as the mask
     alpha = mask_img.split()[3]
     out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     out.paste(grad, (0, 0), alpha)

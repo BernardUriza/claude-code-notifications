@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-cc_config_gui.py — Ventana de configuración de CC--VH-lite (macOS + Windows).
+cc_config_gui.py — Settings window for CC--VH-lite (macOS + Windows).
 
-Look & feel "dev-tool DNA": dark mode técnico, tipografía monospace, paleta
-charcoal + azul eléctrico + verde menta (cc_theme). Sliders, switches y pills
-modernos vía CustomTkinter; cae a Tkinter puro (incluido en Python) si no está
-customtkinter, así SIEMPRE corre en Mac y Windows.
+Dev-tool DNA look & feel: technical dark mode, monospace typography, a charcoal
++ electric-blue + mint-green palette (cc_theme). Modern sliders, switches, and
+pills via CustomTkinter; falls back to plain Tkinter (bundled with Python) if
+customtkinter is missing, so it ALWAYS runs on Mac and Windows.
 
-    pip install customtkinter   # para el look premium del mockup
+    pip install customtkinter   # for the premium look from the mockup
 
-Uso:
+Usage:
     python cc_config_gui.py
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 import cc_config
 import cc_theme
 
-# ── Backend GUI: CustomTkinter si existe, si no Tkinter puro ──
+# ── GUI backend: CustomTkinter if present, otherwise plain Tkinter ──
 USING_CTK = False
 try:
     import customtkinter as ctk
@@ -40,7 +40,7 @@ try:
 except ImportError:
     _HAS_PIL = False
 
-# ── Estado en disco (mismo que cc_notify.py) ──
+# ── State on disk (same as cc_notify.py) ──
 STATE   = Path.home() / ".cc-notify"
 MUTE_DIR = STATE / "mute"
 QUIET   = STATE / "quiet"
@@ -51,12 +51,12 @@ SESS_DIR = STATE / "sessions"
 VOICES = ["onyx", "alloy", "ash", "ballad", "coral", "echo",
           "fable", "nova", "sage", "shimmer"]
 
-# Atajos de paleta
+# Palette shortcut
 C = cc_theme
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers de estado en disco
+# Disk-state helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _toggle_file(p: Path, on: bool) -> None:
@@ -86,13 +86,13 @@ def _set_dnd(minutes: int) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# La ventana
+# The window
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ConfigWindow:
     def __init__(self) -> None:
         self.cfg = cc_config.load()
-        self._imgs = []   # refs a CTkImage/PhotoImage para que no las barra el GC
+        self._imgs = []   # refs to CTkImage/PhotoImage so the GC doesn't drop them
 
         if USING_CTK:
             self.root = ctk.CTk()
@@ -100,7 +100,7 @@ class ConfigWindow:
         else:
             self.root = tk.Tk()
             self.root.configure(bg=C.BG)
-        self.root.title("CC--VH-lite · Configuración")
+        self.root.title("CC--VH-lite · Settings")
         self.root.geometry("500x720")
         self.root.minsize(460, 640)
 
@@ -109,7 +109,7 @@ class ConfigWindow:
         self._build()
         self._refresh_dnd_label()
 
-    # ── Tipografía monospace disponible en el SO ──
+    # ── Monospace typeface available on the OS ──
     def _pick_mono(self) -> str:
         fams = set(tkfont.families())
         for f in C.MONO_STACK:
@@ -118,13 +118,13 @@ class ConfigWindow:
         return "Consolas" if sys.platform.startswith("win") else "Courier"
 
     def _f(self, size: int, bold: bool = False):
-        """Fuente monospace (CTkFont si CTk, tuple si Tkinter)."""
+        """Monospace font (CTkFont under CTk, tuple under Tkinter)."""
         weight = "bold" if bold else "normal"
         if USING_CTK:
             return ctk.CTkFont(family=self.mono, size=size, weight=weight)
         return (self.mono, size, weight)
 
-    # ── Variables Tk ──
+    # ── Tk variables ──
     def _vars(self) -> None:
         self.var_voice    = tk.StringVar(value=self.cfg.get("voice", "onyx"))
         self.var_minwords = tk.IntVar(value=int(self.cfg.get("min_words", 30)))
@@ -133,7 +133,7 @@ class ConfigWindow:
         self.var_quiet    = tk.BooleanVar(value=QUIET.exists())
         self.var_nosound  = tk.BooleanVar(value=NOSOUND.exists())
 
-    # ── Construcción ──
+    # ── Build ──
     def _build(self) -> None:
         if USING_CTK:
             self._build_ctk()
@@ -141,7 +141,7 @@ class ConfigWindow:
             self._build_tk()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Rama PREMIUM (CustomTkinter)
+    # PREMIUM branch (CustomTkinter)
     # ─────────────────────────────────────────────────────────────────────────
     def _card(self, parent):
         return ctk.CTkFrame(parent, fg_color=C.BG_CARD, corner_radius=12)
@@ -155,7 +155,7 @@ class ConfigWindow:
                                       scrollbar_button_color=C.BG_CARD)
         root.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # ── Header: logo gradiente + wordmark ──
+        # ── Header: gradient logo + wordmark ──
         head = ctk.CTkFrame(root, fg_color="transparent")
         head.pack(fill="x", pady=(8, 18))
         if _HAS_PIL:
@@ -171,9 +171,9 @@ class ConfigWindow:
         ctk.CTkLabel(wm, text="notification control", font=self._f(11),
                      text_color=C.TEXT_DIM, anchor="w").pack(anchor="w")
 
-        # ── No Molestar (pills) ──
+        # ── Do Not Disturb (pills) ──
         c1 = self._card(root); c1.pack(fill="x", pady=8)
-        self._section_title(c1, "  No Molestar").pack(fill="x", padx=14, pady=(12, 2))
+        self._section_title(c1, "  Do Not Disturb").pack(fill="x", padx=14, pady=(12, 2))
         self.dnd_status = ctk.CTkLabel(c1, text="", font=self._f(12),
                                        text_color=C.STATUS, anchor="w")
         self.dnd_status.pack(fill="x", padx=16, pady=(0, 6))
@@ -188,25 +188,25 @@ class ConfigWindow:
                 command=lambda m=mins: self._dnd_set(m),
             ).pack(side="left", padx=4)
         self.btn_cancel = ctk.CTkButton(
-            pills, text="Cancelar", width=78, height=30, corner_radius=15,
+            pills, text="Cancel", width=78, height=30, corner_radius=15,
             font=self._f(12), fg_color=C.BG_INPUT, hover_color=C.DANGER,
             text_color=C.TEXT_DIM, command=lambda: self._dnd_set(0),
         )
         self.btn_cancel.pack(side="left", padx=4)
 
-        # ── Silencios (switches) ──
+        # ── Silence (switches) ──
         c2 = self._card(root); c2.pack(fill="x", pady=8)
-        self._section_title(c2, "  Silencios").pack(fill="x", padx=14, pady=(12, 4))
-        self._ctk_switch(c2, "Silencio global (quiet)", self.var_quiet, self._apply_quiet)
-        self._ctk_switch(c2, "Sin sonido (banner mudo)", self.var_nosound, self._apply_nosound)
+        self._section_title(c2, "  Silence").pack(fill="x", padx=14, pady=(12, 4))
+        self._ctk_switch(c2, "Global silence (quiet)", self.var_quiet, self._apply_quiet)
+        self._ctk_switch(c2, "No sound (silent banner)", self.var_nosound, self._apply_nosound)
         ctk.CTkFrame(c2, fg_color="transparent", height=8).pack()
 
-        # ── Voz y lectura ──
+        # ── Voice & reading ──
         c3 = self._card(root); c3.pack(fill="x", pady=8)
-        self._section_title(c3, "  Voz y lectura").pack(fill="x", padx=14, pady=(12, 8))
+        self._section_title(c3, "  Voice & reading").pack(fill="x", padx=14, pady=(12, 8))
 
         rv = ctk.CTkFrame(c3, fg_color="transparent"); rv.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(rv, text="Voz TTS", font=self._f(12), text_color=C.TEXT,
+        ctk.CTkLabel(rv, text="TTS voice", font=self._f(12), text_color=C.TEXT,
                      width=120, anchor="w").pack(side="left")
         ctk.CTkOptionMenu(rv, values=VOICES, variable=self.var_voice,
                           font=self._f(12), width=130,
@@ -216,17 +216,17 @@ class ConfigWindow:
                           dropdown_hover_color=C.BG_INPUT).pack(side="left", padx=8)
 
         self.lbl_minwords = self._ctk_slider(
-            c3, "Mín. palabras", self.var_minwords, 5, 120)
+            c3, "Min. words", self.var_minwords, 5, 120)
         self.lbl_dnddef = self._ctk_slider(
             c3, "DND default (min)", self.var_dnddef, 15, 240)
 
-        self._ctk_switch(c3, "Decir nombre del repo antes del texto",
+        self._ctk_switch(c3, "Speak the repo name before the text",
                          self.var_repo, lambda: None)
         ctk.CTkFrame(c3, fg_color="transparent", height=10).pack()
 
-        # ── Guardar ──
+        # ── Save ──
         self.btn_save = ctk.CTkButton(
-            root, text="Guardar configuración", height=40, corner_radius=20,
+            root, text="Save settings", height=40, corner_radius=20,
             font=self._f(14, bold=True), fg_color=C.ACCENT,
             hover_color=C.ACCENT_HI, text_color="#08222e",
             command=self._save)
@@ -259,7 +259,7 @@ class ConfigWindow:
         return val
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Rama FALLBACK (Tkinter puro) — dark, sin pills pero funcional
+    # FALLBACK branch (plain Tkinter) — dark, no pills but functional
     # ─────────────────────────────────────────────────────────────────────────
     def _build_tk(self) -> None:
         pad = {"padx": 16, "pady": 5}
@@ -274,37 +274,37 @@ class ConfigWindow:
         L(self.root, "notification control", fg=dim, font=(self.mono, 10)).pack(pady=(0, 10))
 
         f1 = tk.Frame(self.root, bg=card); f1.pack(fill="x", **pad)
-        L(f1, "No Molestar", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        L(f1, "Do Not Disturb", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
         self.dnd_status = L(f1, "", bg=card, fg=C.STATUS); self.dnd_status.pack(anchor="w", padx=10)
         bf = tk.Frame(f1, bg=card); bf.pack(fill="x", padx=10, pady=8)
         for mins, lbl in [(30, "30 min"), (60, "1 h"), (120, "2 h"), (240, "4 h")]:
             tk.Button(bf, text=lbl, command=lambda m=mins: self._dnd_set(m),
                       bg=bg, fg=acc, activebackground=C.BG_INPUT, relief="flat",
                       font=(self.mono, 10, "bold")).pack(side="left", padx=3)
-        tk.Button(bf, text="Cancelar", command=lambda: self._dnd_set(0),
+        tk.Button(bf, text="Cancel", command=lambda: self._dnd_set(0),
                   bg=C.BG_INPUT, fg=dim, relief="flat", font=(self.mono, 10)).pack(side="left", padx=3)
 
         f2 = tk.Frame(self.root, bg=card); f2.pack(fill="x", **pad)
-        L(f2, "Silencios", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
-        for text, var, cmd in [("Silencio global (quiet)", self.var_quiet, self._apply_quiet),
-                               ("Sin sonido (banner mudo)", self.var_nosound, self._apply_nosound)]:
+        L(f2, "Silence", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        for text, var, cmd in [("Global silence (quiet)", self.var_quiet, self._apply_quiet),
+                               ("No sound (silent banner)", self.var_nosound, self._apply_nosound)]:
             tk.Checkbutton(f2, text=text, variable=var, command=cmd, bg=card, fg=txt,
                            selectcolor=bg, activebackground=card, activeforeground=acc,
                            font=(self.mono, 11)).pack(anchor="w", padx=10, pady=2)
 
         f3 = tk.Frame(self.root, bg=card); f3.pack(fill="x", **pad)
-        L(f3, "Voz y lectura", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 4))
+        L(f3, "Voice & reading", bg=card, font=(self.mono, 13, "bold")).pack(anchor="w", padx=10, pady=(8, 4))
         rv = tk.Frame(f3, bg=card); rv.pack(fill="x", padx=10, pady=3)
-        L(rv, "Voz TTS:", bg=card).pack(side="left")
+        L(rv, "TTS voice:", bg=card).pack(side="left")
         ttk.Combobox(rv, values=VOICES, textvariable=self.var_voice,
                      state="readonly", width=12).pack(side="left", padx=8)
-        self.lbl_minwords = self._tk_slider(f3, "Mín. palabras:", self.var_minwords, 5, 120)
+        self.lbl_minwords = self._tk_slider(f3, "Min. words:", self.var_minwords, 5, 120)
         self.lbl_dnddef = self._tk_slider(f3, "DND default:", self.var_dnddef, 15, 240)
-        tk.Checkbutton(f3, text="Decir nombre del repo antes del texto", variable=self.var_repo,
+        tk.Checkbutton(f3, text="Speak the repo name before the text", variable=self.var_repo,
                        bg=card, fg=txt, selectcolor=bg, activebackground=card,
                        font=(self.mono, 11)).pack(anchor="w", padx=10, pady=(4, 8))
 
-        tk.Button(self.root, text="Guardar configuración", command=self._save,
+        tk.Button(self.root, text="Save settings", command=self._save,
                   bg=acc, fg="#08222e", relief="flat", font=(self.mono, 12, "bold"),
                   activebackground=C.ACCENT_HI).pack(pady=10)
         self.feedback = L(self.root, "", fg=C.STATUS); self.feedback.pack(pady=(0, 8))
@@ -323,15 +323,15 @@ class ConfigWindow:
                  ).pack(side="left", fill="x", expand=True, padx=8)
         return lbl
 
-    # ── Acciones (comunes a ambas ramas) ──
+    # ── Actions (shared by both branches) ──
     def _refresh_dnd_label(self) -> None:
         rem = _dnd_remaining()
         if rem > 0:
             h, r = divmod(int(rem), 3600)
             m = r // 60
-            txt = f"⏳ Activo — {h}h {m:02d}min restantes" if h else f"⏳ Activo — {m}min restantes"
+            txt = f"⏳ Active — {h}h {m:02d}min left" if h else f"⏳ Active — {m}min left"
         else:
-            txt = "Inactivo"
+            txt = "Inactive"
         try:
             self.dnd_status.configure(text=txt)
             if hasattr(self, "btn_cancel"):
@@ -363,9 +363,9 @@ class ConfigWindow:
         self.cfg["speak_repo_name"] = bool(self.var_repo.get())
         try:
             cc_config.save(self.cfg)
-            self.feedback.configure(text="✅ Guardado. Aplica en el próximo hook (sin reiniciar Claude).")
+            self.feedback.configure(text="✅ Saved. Applies on the next hook (no Claude restart).")
         except OSError as e:
-            messagebox.showerror("Error", f"No pude guardar config:\n{e}")
+            messagebox.showerror("Error", f"Couldn't save config:\n{e}")
 
     def run(self) -> None:
         def _tick():
