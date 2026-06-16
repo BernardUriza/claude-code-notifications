@@ -40,7 +40,7 @@ except Exception:
 
 try:
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image          # el dibujo del isotipo vive en cc_theme
 except ImportError:
     print(
         "ERROR: Faltan dependencias del tray.\n"
@@ -57,14 +57,10 @@ NOSOUND = STATE / "nosound"
 DND     = STATE / "dnd"
 SESS_DIR = STATE / "sessions"
 
-# ── Colores del ícono ──
-COLOR_ACTIVE  = "#22c55e"   # verde  — notificando
-COLOR_DND     = "#eab308"   # amarillo — DND con timer
-COLOR_QUIET   = "#ef4444"   # rojo   — silencio global
-COLOR_IDLE    = "#6b7280"   # gris   — sin sesiones / apagado
-BG            = "#1e1e1e"   # fondo del ícono (círculo oscuro)
-SIZE          = 64          # px del ícono (pystray lo escala)
+# Branding compartido (paleta + isotipo dibujado en código).
+import cc_theme
 
+SIZE          = 64          # px del ícono (pystray lo escala)
 REFRESH_SECS  = 15          # con qué frecuencia se refresca el estado
 
 
@@ -110,25 +106,26 @@ def get_state() -> dict:
     nosound = NOSOUND.exists()
     sessions = list(SESS_DIR.glob("*.json"))
 
-    if quiet:
-        color = COLOR_QUIET
-        label = "Silenciado (global)"
+    if quiet or nosound:
+        variant = "muted"
+        label = "Silenciado (global)" if quiet else "Sin sonido"
         symbol = "🔇"
     elif dnd_rem > 0:
-        color = COLOR_DND
+        variant = "dnd"
         label = f"DND {_fmt_rem(dnd_rem)} (hasta {_fmt_until(dnd_rem)})"
         symbol = "⏳"
     elif sessions:
-        color = COLOR_ACTIVE
+        variant = "active"
         label = "Activo — notificando"
         symbol = "🔔"
     else:
-        color = COLOR_IDLE
+        variant = "idle"
         label = "Sin sesiones"
         symbol = "○"
 
     return {
-        "color": color,
+        "variant": variant,
+        "color": cc_theme.STATE_COLORS[variant],
         "label": label,
         "symbol": symbol,
         "quiet": quiet,
@@ -139,23 +136,12 @@ def get_state() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ícono generado con Pillow
+# Ícono: isotipo CC--VH-lite por estado (delegado a cc_theme)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_icon(color: str) -> Image.Image:
-    """Genera un ícono cuadrado con un círculo del color dado."""
-    img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    pad = 4
-    # Sombra sutil
-    draw.ellipse([pad + 2, pad + 2, SIZE - pad + 2, SIZE - pad + 2],
-                 fill=(0, 0, 0, 80))
-    # Círculo principal
-    draw.ellipse([pad, pad, SIZE - pad, SIZE - pad], fill=color)
-    # Borde interior claro
-    draw.ellipse([pad + 3, pad + 3, SIZE - pad - 3, SIZE - pad - 3],
-                 outline=(255, 255, 255, 60), width=2)
-    return img
+def make_icon(variant: str) -> Image.Image:
+    """Isotipo de la bandeja para el estado dado (active/dnd/muted/idle)."""
+    return cc_theme.draw_logo(SIZE, variant=variant)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,7 +308,7 @@ class CCTray:
         if tgt is None:
             return
         state = get_state()
-        tgt.icon = make_icon(state["color"])
+        tgt.icon = make_icon(state["variant"])
         tgt.title = f"cc-notify — {state['label']}"
         tgt.menu = self._build_menu(state)
 
@@ -337,7 +323,7 @@ class CCTray:
         state = get_state()
         icon = pystray.Icon(
             name="cc-notify",
-            icon=make_icon(state["color"]),
+            icon=make_icon(state["variant"]),
             title=f"cc-notify — {state['label']}",
             menu=self._build_menu(state),
         )
