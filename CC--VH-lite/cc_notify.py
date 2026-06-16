@@ -197,6 +197,10 @@ def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None
         "  $doc.LoadXml($env:CC_TOAST_XML);"
         "  $t=New-Object Windows.UI.Notifications.ToastNotification $doc;"
         "  $t.Tag=$env:CC_GROUP; $t.Group='claude-code';"
+        # Remove this session's previous toast first: re-Showing the SAME tag is
+        # treated as a silent update (no banner). Removing then Showing makes
+        # Windows pop the banner again, while still not stacking 8 of them.
+        "  try { [Windows.UI.Notifications.ToastNotificationManager]::History.Remove($env:CC_GROUP,'claude-code',$env:CC_AUMID) } catch {};"
         "  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:CC_AUMID).Show($t);"
         "}"
     )
