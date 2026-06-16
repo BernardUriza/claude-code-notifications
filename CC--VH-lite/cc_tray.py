@@ -27,7 +27,16 @@ o restablecer notificaciones — sin abrir una terminal.
 import sys
 import time
 import threading
+import subprocess
 from pathlib import Path
+
+# La consola de Windows usa cp1252 por defecto y truena con los emojis de los
+# prints (--check-deps, mensajes de error). UTF-8 para no reventar.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 try:
     import pystray
@@ -218,6 +227,32 @@ class CCTray:
         _cancel_dnd()
         self._refresh(icon)
 
+    def _on_config(self, icon, item):
+        """Abre la ventana de configuración como proceso SEPARADO.
+
+        El tray (pystray) y la ventana (Tkinter) tienen cada uno su propio
+        mainloop; correrlos en el mismo proceso pelea por el loop. Lanzamos
+        cc_config_gui.py detached con pythonw (sin consola en Windows).
+        """
+        gui = Path(__file__).resolve().parent / "cc_config_gui.py"
+        # En Windows usamos pythonw.exe (sin ventana de consola) si existe.
+        exe = sys.executable or "python"
+        if sys.platform.startswith("win"):
+            pw = exe.replace("python.exe", "pythonw.exe")
+            if Path(pw).exists():
+                exe = pw
+        kwargs: dict = dict(stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        if sys.platform.startswith("win"):
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        else:
+            kwargs["start_new_session"] = True
+        try:
+            subprocess.Popen([exe, str(gui)], **kwargs)
+        except OSError:
+            pass
+
     def _on_quit(self, icon, item):
         self._stop_event.set()
         icon.stop()
@@ -264,11 +299,15 @@ class CCTray:
         sound_label = "🔔  Activar sonido" if nosound else "🤫  Silenciar sonido"
         sound_item = pystray.MenuItem(sound_label, self._on_sound)
 
+        # Abrir ventana de configuración (default = doble click en el ícono)
+        config_item = pystray.MenuItem("⚙️  Configuración…", self._on_config, default=True)
+
         quit_item = pystray.MenuItem("✖  Cerrar tray", self._on_quit)
 
         return pystray.Menu(
             status_item,
             separator,
+            config_item,
             toggle_item,
             dnd_item,
             sound_item,
