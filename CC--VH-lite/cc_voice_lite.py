@@ -123,9 +123,62 @@ SPEAK_REPO = _conf("speak_repo_name", True)
 SENTENCE_END = ".!?…"
 
 
+# ── Single-voice serialization (no overlap) ──
+# Each hook that decides to speak spawns a fully detached speaker; without a
+# shared gate, two events firing close together play two voices ON TOP of each
+# other. We serialize via a tiny lock file holding the active speaker's PID:
+#   • A new speaker writes its PID, then re-reads after a short pause — if the
+#     lock no longer names it, a NEWER speaker already took over, so it stays
+#     silent (settles simultaneous-start races; latest voice wins).
+#   • The player loops (MediaPlayer / afplay / SAPI) poll this lock and STOP
+#     themselves the moment the PID stops matching — a previous voice is cut
+#     cooperatively, never by killing a raw PID (no PID-reuse hazard).
+# Degrade-gracefully: any lock IO error → behave as if we own the slot (speak),
+# never go silent by accident.
+VOICE_LOCK = Path.home() / ".cc-notify" / "voice.lock"
+
+
+def _claim_voice_slot() -> bool:
+    """Become the active speaker. False = a newer voice superseded us → don't speak."""
+    try:
+        VOICE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        VOICE_LOCK.write_text(str(os.getpid()), encoding="utf-8")
+        time.sleep(0.15)
+        return VOICE_LOCK.read_text(encoding="utf-8").strip() == str(os.getpid())
+    except Exception:
+        return True
+
+
+def _release_voice_slot() -> None:
+    """Release the slot iff we still hold it (a newer speaker may own it now)."""
+    try:
+        if VOICE_LOCK.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            VOICE_LOCK.unlink()
+    except Exception:
+        pass
+
+
+def _voice_lock_env() -> dict:
+    """Env for the playback subprocess so it can poll the lock and self-stop."""
+    env = os.environ.copy()
+    env["CC_VOICE_LOCK"] = str(VOICE_LOCK)
+    env["CC_VOICE_PID"] = str(os.getpid())
+    return env
+
+
+def _superseded() -> bool:
+    """True if a newer speaker now owns the voice slot (we should stop)."""
+    try:
+        return VOICE_LOCK.read_text(encoding="utf-8").strip() != str(os.getpid())
+    except Exception:
+        return False  # can't tell → keep playing (don't cut on a transient error)
+
+
 def _play_audio_file(path: str) -> None:
-    """Play an audio file in a blocking way, per platform."""
+    """Play an audio file, stopping early if a newer voice supersedes us."""
     if IS_WINDOWS:
+        # MediaPlayer + a poll loop: every 200ms re-read the lock file; if the
+        # PID no longer matches ours, a newer voice claimed the slot → stop.
         ps = (
             "Add-Type -AssemblyName presentationCore;"
             "$p = New-Object System.Windows.Media.MediaPlayer;"
@@ -133,38 +186,66 @@ def _play_audio_file(path: str) -> None:
             "Start-Sleep -Milliseconds 300;"
             "$p.Play();"
             "while ($p.NaturalDuration.HasTimeSpan -eq $false) { Start-Sleep -Milliseconds 50 };"
-            "Start-Sleep -Seconds $p.NaturalDuration.TimeSpan.TotalSeconds;"
-            "$p.Close()"
+            "$dur = $p.NaturalDuration.TimeSpan.TotalSeconds;"
+            "$lock = $env:CC_VOICE_LOCK; $me = $env:CC_VOICE_PID;"
+            "while ($p.Position.TotalSeconds -lt $dur) {"
+            "  Start-Sleep -Milliseconds 200;"
+            "  if ($lock -and (Test-Path $lock)) {"
+            "    $owner = (Get-Content -Raw $lock).Trim();"
+            "    if ($owner -ne $me) { break }"
+            "  }"
+            "};"
+            "$p.Stop(); $p.Close()"
         )
-        env = os.environ.copy()
+        env = _voice_lock_env()
         env["CC_AUDIO_PATH"] = path
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             env=env, check=False, creationflags=CREATE_NO_WINDOW,
         )
     else:
-        subprocess.run(["afplay", path], check=False)
+        # afplay is killable: poll the lock and terminate if superseded.
+        proc = subprocess.Popen(["afplay", path])
+        while proc.poll() is None:
+            time.sleep(0.2)
+            if _superseded():
+                proc.terminate()
+                break
 
 
 def _say_local(text: str) -> None:
     """Local voice (last resort): SAPI on Windows, `say` on macOS."""
     try:
         if IS_WINDOWS:
-            env = os.environ.copy()
+            env = _voice_lock_env()
             env["CC_VOICE_TEXT"] = text
             env["CC_VOICE_NAME"] = WIN_SAY_VOICE
+            # SpeakAsync + poll loop so a newer voice can cut us mid-sentence.
             ps = (
                 "Add-Type -AssemblyName System.Speech;"
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
                 "if ($env:CC_VOICE_NAME) { try { $s.SelectVoice($env:CC_VOICE_NAME) } catch {} };"
-                "$s.Speak($env:CC_VOICE_TEXT)"
+                "$s.SpeakAsync($env:CC_VOICE_TEXT) | Out-Null;"
+                "$lock = $env:CC_VOICE_LOCK; $me = $env:CC_VOICE_PID;"
+                "while ($s.State -ne [System.Speech.Synthesis.SynthesizerState]::Ready) {"
+                "  Start-Sleep -Milliseconds 200;"
+                "  if ($lock -and (Test-Path $lock)) {"
+                "    $owner = (Get-Content -Raw $lock).Trim();"
+                "    if ($owner -ne $me) { $s.SpeakAsyncCancelAll(); break }"
+                "  }"
+                "}"
             )
             subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                 env=env, check=False, creationflags=CREATE_NO_WINDOW,
             )
         else:
-            subprocess.run(["say", "-v", SAY_VOICE, text], check=False)
+            proc = subprocess.Popen(["say", "-v", SAY_VOICE, text])
+            while proc.poll() is None:
+                time.sleep(0.2)
+                if _superseded():
+                    proc.terminate()
+                    break
     except Exception:
         pass
 
@@ -189,6 +270,20 @@ def _edge_tts_to_file(text: str, out_path: str) -> bool:
 
 
 def speak_blocking(text: str, voice: str) -> None:
+    """Speak, but only one voice at a time (latest wins — see VOICE_LOCK).
+
+    Claims the voice slot first; if a newer speaker already superseded us we stay
+    silent. Always releases the slot when done so the next voice can play.
+    """
+    if not _claim_voice_slot():
+        return  # a newer voice took over before we even started
+    try:
+        _do_speak(text, voice)
+    finally:
+        _release_voice_slot()
+
+
+def _do_speak(text: str, voice: str) -> None:
     """Generate the audio and play it (afplay on macOS, MediaPlayer on Windows).
 
     Fallback chain, from best to simplest:
