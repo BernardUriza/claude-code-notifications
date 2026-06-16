@@ -50,6 +50,12 @@ IS_WINDOWS = sys.platform.startswith("win")
 # CREATE_NO_WINDOW: keep PowerShell subprocesses from flashing a black console
 # window when they run from a hook (Windows would otherwise pop one up).
 CREATE_NO_WINDOW = 0x08000000
+# Our own AppUserModelID. Windows 11 only shows the floating banner for an AUMID
+# registered as an app (via a Start Menu shortcut + registry); the generic
+# PowerShell AUMID gets dropped straight into the Action Center with no banner.
+# `install.py --register-toast` sets this up. Without it the toast still lands
+# in the Action Center, just without the popup.
+TOAST_AUMID = "ClaudeCode.VoiceHandler"
 
 # ── State on disk (flags as files: simple, no daemon) ──
 STATE = Path.home() / ".cc-notify"
@@ -176,6 +182,7 @@ def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None
     env["CC_BODY"] = body
     env["CC_GROUP"] = group or "claude"
     env["CC_TOAST_XML"] = toast_xml
+    env["CC_AUMID"] = TOAST_AUMID
 
     silent_bt = "-Silent" if silent else ""
     ps = (
@@ -190,8 +197,7 @@ def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None
         "  $doc.LoadXml($env:CC_TOAST_XML);"
         "  $t=New-Object Windows.UI.Notifications.ToastNotification $doc;"
         "  $t.Tag=$env:CC_GROUP; $t.Group='claude-code';"
-        "  $appId='{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';"
-        "  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($t);"
+        "  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:CC_AUMID).Show($t);"
         "}"
     )
     subprocess.Popen(

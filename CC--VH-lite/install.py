@@ -248,6 +248,88 @@ def tray_autostart_remove() -> None:
         print("No tray autostart was installed.")
 
 
+# Must match cc_notify.TOAST_AUMID.
+TOAST_AUMID = "ClaudeCode.VoiceHandler"
+TOAST_DISPLAY = "CC--VH-lite"
+
+
+def register_toast_aumid() -> None:
+    """Register a custom AppUserModelID + Start Menu shortcut so Windows 11
+    pops the floating banner (not just an Action Center entry).
+
+    Windows 11 only shows the banner for an AUMID registered as an app. Without
+    this, cc_notify's toast still reaches the Action Center, just without the
+    popup. Sets three things: the AUMID identity (DisplayName), ShowBanner=1,
+    and a Start Menu shortcut with the AUMID embedded (the piece that makes
+    Windows treat it as a real app, like Discord does).
+    """
+    if not IS_WINDOWS:
+        print("ℹ️  Toast banner registration only applies on Windows.")
+        return
+    ps = r'''
+$AumID = "''' + TOAST_AUMID + r'''"
+$Disp = "''' + TOAST_DISPLAY + r'''"
+$ShortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CC--VH-lite.lnk"
+$ck = "HKCU:\Software\Classes\AppUserModelId\$AumID"
+New-Item $ck -Force | Out-Null
+Set-ItemProperty $ck -Name "DisplayName" -Value $Disp -Type String
+$nk = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\$AumID"
+New-Item $nk -Force | Out-Null
+Set-ItemProperty $nk -Name "Enabled" -Value 1 -Type DWord
+Set-ItemProperty $nk -Name "ShowBanner" -Value 1 -Type DWord
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Text;
+namespace CCVHInstall {
+  [ComImport, Guid("00021401-0000-0000-C000-000000000046")] internal class SL { }
+  [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+  internal interface ISL {
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder f,int c,IntPtr p,uint fl); void GetIDList(out IntPtr p); void SetIDList(IntPtr p);
+    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder n,int c); void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string n);
+    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder d,int c); void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string d);
+    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder a,int c); void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string a);
+    void GetHotkey(out short h); void SetHotkey(short h); void GetShowCmd(out uint s); void SetShowCmd(uint s);
+    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder i,int c,out int x); void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string i,int x);
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string r,uint d); void Resolve(IntPtr h,uint f); void SetPath([MarshalAs(UnmanagedType.LPWStr)] string f); }
+  [ComImport, Guid("0000010b-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IPF { void GetClassID(out Guid c); [PreserveSig] int IsDirty(); void Load([MarshalAs(UnmanagedType.LPWStr)] string f,uint m);
+    void Save([MarshalAs(UnmanagedType.LPWStr)] string f,[MarshalAs(UnmanagedType.Bool)] bool r); void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string f); void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string f); }
+  [ComImport, Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IPS { void GetCount(out uint c); void GetAt(uint i,out PK k); void GetValue(ref PK k,out PV v); void SetValue(ref PK k,ref PV v); void Commit(); }
+  [StructLayout(LayoutKind.Sequential)] internal struct PK { public Guid fmtid; public uint pid; }
+  [StructLayout(LayoutKind.Explicit)] internal struct PV { [FieldOffset(0)] public ushort vt; [FieldOffset(8)] public IntPtr p; }
+  public static class H {
+    static PK K = new PK { fmtid=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid=5 };
+    public static void Create(string path,string target,string aumid){
+      var l=(ISL)new SL(); l.SetPath(target);
+      var v=new PV(); v.vt=31; v.p=Marshal.StringToCoTaskMemUni(aumid);
+      ((IPS)l).SetValue(ref K, ref v); ((IPS)l).Commit(); Marshal.FreeCoTaskMem(v.p);
+      ((IPF)l).Save(path,true); }
+  }
+}
+'@
+[CCVHInstall.H]::Create($ShortcutPath, "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe", $AumID)
+'''
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1",
+                                     delete=False, encoding="utf-8") as fh:
+        fh.write(ps)
+        tmp = fh.name
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-File", tmp],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000, check=False)
+        print(f"✅ Toast banner registered (AUMID '{TOAST_DISPLAY}').")
+        print("   Note: the FIRST notification may take a couple of minutes to pop")
+        print("   while Windows indexes the new shortcut. After that it's instant.")
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="CC--VH-lite installer")
     ap.add_argument("--dry-run", action="store_true", help="show without writing")
@@ -256,7 +338,13 @@ def main() -> None:
                     help="(Windows) install cc_tray.py into Startup")
     ap.add_argument("--tray-autostart-remove", action="store_true",
                     help="(Windows) remove the tray autostart")
+    ap.add_argument("--register-toast", action="store_true",
+                    help="(Windows) register the AUMID so banners pop (not just Action Center)")
     args = ap.parse_args()
+
+    if args.register_toast:
+        register_toast_aumid()
+        return
 
     if not NOTIFY.exists() or not VOICE.exists():
         print(f"❌ Can't find the scripts in {HERE}. Are you running this from the clone?")
@@ -295,6 +383,10 @@ def main() -> None:
         print(json.dumps(merged, indent=2, ensure_ascii=False))
     else:
         write_settings(merged)
+        # Windows 11 only pops the banner for a registered AUMID — set it up so
+        # notifications actually show as banners, not just Action Center entries.
+        if IS_WINDOWS:
+            register_toast_aumid()
 
     check_deps()
     print("\n🔁 Restart Claude Code so it picks up the hooks.")
