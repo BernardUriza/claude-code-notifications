@@ -6,3 +6,6 @@ Icon?
 *.zip
 claude-code-voice-handler-master/
 .DS_Store
+Thumbs.db
+desktop.ini
+*.json.ccvh-bak
