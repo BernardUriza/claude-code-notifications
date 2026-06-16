@@ -47,6 +47,9 @@ except Exception:
     pass
 
 IS_WINDOWS = sys.platform.startswith("win")
+# CREATE_NO_WINDOW: keep PowerShell subprocesses from flashing a black console
+# window when they run from a hook (Windows would otherwise pop one up).
+CREATE_NO_WINDOW = 0x08000000
 
 # ── State on disk (flags as files: simple, no daemon) ──
 STATE = Path.home() / ".cc-notify"
@@ -197,6 +200,7 @@ def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         env=env,
+        creationflags=CREATE_NO_WINDOW,   # no console window flash on the banner
     )
 
 
@@ -481,7 +485,8 @@ def cmd_stop() -> None:
              "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" "
              "| Where-Object { $_.CommandLine -match 'CC_AUDIO_PATH|speak-now' } "
              "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW)
     else:
         subprocess.run(["pkill", "-x", "afplay"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

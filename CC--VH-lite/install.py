@@ -181,7 +181,8 @@ def check_deps() -> None:
                 r = subprocess.run(
                     ["powershell", "-NoProfile", "-NonInteractive", "-Command",
                      "if (Get-Module -ListAvailable -Name BurntToast) { 'yes' } else { 'no' }"],
-                    capture_output=True, text=True, timeout=15)
+                    capture_output=True, text=True, timeout=15,
+                    creationflags=0x08000000)  # CREATE_NO_WINDOW
                 bt = r.stdout.strip() == "yes"
             except Exception:
                 pass

@@ -37,6 +37,9 @@ from pathlib import Path
 SECRET_FILE = Path.home() / ".secrets" / "azure-openai-key.txt"
 
 IS_WINDOWS = sys.platform.startswith("win")
+# CREATE_NO_WINDOW: keep the PowerShell playback/voice subprocesses from flashing
+# a black console window.
+CREATE_NO_WINDOW = 0x08000000
 
 # Windows local fallback (SAPI via System.Speech). Empty voice = the system
 # default. List the installed ones with:
@@ -130,7 +133,7 @@ def _play_audio_file(path: str) -> None:
         env["CC_AUDIO_PATH"] = path
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            env=env, check=False,
+            env=env, check=False, creationflags=CREATE_NO_WINDOW,
         )
     else:
         subprocess.run(["afplay", path], check=False)
@@ -151,7 +154,7 @@ def _say_local(text: str) -> None:
             )
             subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                env=env, check=False,
+                env=env, check=False, creationflags=CREATE_NO_WINDOW,
             )
         else:
             subprocess.run(["say", "-v", SAY_VOICE, text], check=False)
