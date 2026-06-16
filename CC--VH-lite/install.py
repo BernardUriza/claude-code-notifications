@@ -202,17 +202,33 @@ def _tray_autostart_path() -> Path:
 
 
 def tray_autostart_install(interp: str) -> None:
-    """Crea un .vbs en Startup para lanzar cc_tray.py sin ventana de consola."""
+    """Crea un .vbs en Startup para lanzar cc_tray.py sin ventana de consola.
+
+    Robusto con espacios en la ruta: entrecomilla intérprete y script (en VBS
+    las comillas se escapan duplicándolas → `""`). Usa la ruta ABSOLUTA del
+    intérprete (sys.executable), no el nombre `python`, porque el PATH del
+    proceso de login puede diferir del PATH del shell donde se instaló.
+    """
     if not IS_WINDOWS:
         print("ℹ️  Autostart de tray solo aplica en Windows.")
         return
     startup = _tray_autostart_path()
+    startup.mkdir(parents=True, exist_ok=True)
     vbs = startup / "cc_tray.vbs"
-    script = TRAY.as_posix()
-    # wscript.exe corre el .py con CreateObject("WScript.Shell").Run sin ventana
+
+    # Ruta absoluta del intérprete (cae al nombre solo si sys.executable falta).
+    py = sys.executable or interp
+    script = str(TRAY)
+
+    def _vbs_quote(s: str) -> str:
+        # Comilla VBS: " interna → "" ; envuelto en comillas para el shell.
+        return '""' + s.replace('"', '""') + '""'
+
+    cmd = f"{_vbs_quote(py)} {_vbs_quote(script)}"
+    # wscript.exe corre el comando con Run sin ventana (0 = oculto, False = no esperar)
     vbs_content = (
         'Set WShell = CreateObject("WScript.Shell")\r\n'
-        f'WShell.Run "{interp} {script}", 0, False\r\n'
+        f'WShell.Run "{cmd}", 0, False\r\n'
     )
     vbs.write_text(vbs_content, encoding="utf-8")
     print(f"✅ Autostart creado: {vbs}")

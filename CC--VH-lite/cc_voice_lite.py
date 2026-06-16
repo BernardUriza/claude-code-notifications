@@ -66,16 +66,31 @@ AZURE_DEPLOYMENT = _cfg("Deployment", "tts")
 AZURE_API_VERSION = _cfg("API-Version", "2024-02-15-preview")
 
 # Config compartida (~/.cc-notify/config.json): voz, min_words, etc.
-# Prioridad: env var > config.json > secrets file > default.
+# Usamos load_raw() (SOLO lo presente en el archivo) para no dejar que un
+# default del config pise una fuente de menor prioridad (p. ej. `Voice:` del
+# secrets file). Si cc_config no importa, _RAW vacío → todo cae a defaults.
 try:
     import cc_config
-    _CC = cc_config.load()
+    _RAW = cc_config.load_raw()
 except Exception:
-    _CC = {"voice": "onyx", "min_words": 30, "max_chars_speech": 600, "speak_repo_name": True}
+    cc_config = None
+    _RAW = {}
+
+
+def _conf(key, default):
+    """Valor del config.json (archivo), casteado; default si ausente/basura."""
+    if cc_config is not None and key in _RAW:
+        c = cc_config._coerce(key, _RAW[key])
+        if c is not None:
+            return c
+    return default
+
 
 # Voz OpenAI (alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer).
-# Prioridad: env AZURE_TTS_VOICE > config.json `voice` > secrets `Voice:` > onyx.
-AZURE_VOICE = (_cfg("AZURE_TTS_VOICE") or _CC.get("voice")
+# Prioridad REAL: env AZURE_TTS_VOICE > config.json `voice` > secrets `Voice:` > onyx.
+# `_conf("voice", None)` devuelve None si la clave NO está en el archivo, así
+# `or` cae al secrets file en vez de pisarlo con un default.
+AZURE_VOICE = (_cfg("AZURE_TTS_VOICE") or _conf("voice", None)
                or _cfg("Voice") or "onyx")
 
 # ── edge-tts: voz neural GRATIS, sin API key (Microsoft Edge TTS) ──
@@ -87,10 +102,12 @@ EDGE_VOICE = os.environ.get("EDGE_TTS_VOICE", "es-MX-DaliaNeural")
 SAY_VOICE = os.environ.get("SAY_VOICE", "Paulina")
 
 # ── Selección de fragmento (configurable vía config.json) ──
-MIN_WORDS = int(_CC.get("min_words", 30))
+# _conf ya castea y cae a default si el valor es basura → un config.json
+# editado a mano con tipos inválidos NO truena el script en import-time.
+MIN_WORDS = _conf("min_words", 30)
 MAX_RATIO = 0.5
-MAX_CHARS = int(_CC.get("max_chars_speech", 600))
-SPEAK_REPO = bool(_CC.get("speak_repo_name", True))
+MAX_CHARS = _conf("max_chars_speech", 600)
+SPEAK_REPO = _conf("speak_repo_name", True)
 SENTENCE_END = ".!?…"
 
 

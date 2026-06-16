@@ -30,42 +30,80 @@ DEFAULTS = {
 }
 
 
-def load() -> dict:
-    """Lee config.json mezclado con los defaults. Nunca truena."""
-    cfg = dict(DEFAULTS)
+def load_raw() -> dict:
+    """Lee SOLO lo que está en config.json, sin inyectar defaults.
+
+    Clave para resolver prioridad: 'la clave NO está en el archivo' tiene que
+    distinguirse de 'la clave está y vale el mismo valor que el default'. Si
+    `load()` (que mezcla defaults) se usara para esa decisión, un default como
+    voice='onyx' pisaría siempre al secrets file. Nunca truena.
+    """
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                cfg.update({k: v for k, v in data.items() if k in DEFAULTS})
+                return {k: v for k, v in data.items() if k in DEFAULTS}
         except (OSError, json.JSONDecodeError):
             pass
+    return {}
+
+
+def load() -> dict:
+    """Lee config.json mezclado con los defaults. Nunca truena."""
+    cfg = dict(DEFAULTS)
+    cfg.update(load_raw())
     return cfg
 
 
 def save(cfg: dict) -> None:
-    """Escribe solo las claves conocidas en config.json."""
+    """Escribe solo las claves conocidas en config.json, de forma ATÓMICA.
+
+    Escribe a un .tmp y hace os.replace() (rename atómico en el mismo FS), así
+    un crash a media escritura NO puede dejar config.json truncado/corrupto:
+    o queda el viejo intacto, o el nuevo completo.
+    """
     STATE.mkdir(parents=True, exist_ok=True)
     clean = {k: cfg[k] for k in DEFAULTS if k in cfg}
-    CONFIG_FILE.write_text(json.dumps(clean, indent=2, ensure_ascii=False) + "\n",
-                           encoding="utf-8")
+    payload = json.dumps(clean, indent=2, ensure_ascii=False) + "\n"
+    tmp = CONFIG_FILE.with_suffix(".json.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, CONFIG_FILE)   # atómico
+
+
+_INT_KEYS = ("min_words", "max_chars_speech", "max_chars_banner", "dnd_default_min")
+
+
+def _coerce(key: str, val):
+    """Castea un valor crudo al tipo esperado de la clave. None si no se puede."""
+    if key in _INT_KEYS:
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+    if key == "speak_repo_name":
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+    return val
 
 
 def get(key: str, env_var: str | None = None):
-    """Valor de una clave: env var (si se da y existe) > config.json > default.
+    """Valor de una clave: env var (si se da) > config.json (archivo) > default.
 
-    `min_words`, `max_chars_*`, `dnd_default_min` se castean a int.
+    Castea al tipo esperado y, si el valor crudo es basura (p. ej. config.json
+    editado a mano con `"min_words": "cuarenta"`), cae al default en vez de
+    tronar. Resuelve la prioridad con `load_raw()` (solo lo presente en el
+    archivo) para que un default no pise una fuente de menor prioridad.
     """
     if env_var:
         ev = os.environ.get(env_var)
         if ev not in (None, ""):
-            if key in ("min_words", "max_chars_speech", "max_chars_banner", "dnd_default_min"):
-                try:
-                    return int(ev)
-                except ValueError:
-                    pass
-            elif key == "speak_repo_name":
-                return ev.strip().lower() in ("1", "true", "yes", "on")
-            else:
-                return ev
-    return load().get(key, DEFAULTS.get(key))
+            coerced = _coerce(key, ev)
+            if coerced is not None:
+                return coerced
+    raw = load_raw()
+    if key in raw:
+        coerced = _coerce(key, raw[key])
+        if coerced is not None:
+            return coerced
+    return DEFAULTS.get(key)
