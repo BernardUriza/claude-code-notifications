@@ -10,6 +10,13 @@ Respects cc-notify's silence: if ~/.cc-notify/quiet or ~/.cc-voice-off exists,
 it does NOT speak (the .py is read fresh on every hook, so `ccn quiet` mutes it
 without restarting Claude Code).
 
+Toast-first: the voice is a COMPLEMENT to the banner. It speaks ONLY when the
+toast would actually be seen (Windows notifications on for our app + globally).
+If notifications are off, the banner can't pop, so the voice stays silent too —
+one switch silences both. The prediction is a cheap winreg read via
+cc_toast_state (no subprocess, no wait); it does NOT detect Focus Assist / Do
+Not Disturb, and degrades to "speak" on macOS or any uncertainty.
+
 Events:
     - Stop / SubagentStop → Claude's last response (from the .jsonl transcript)
     - Notification        → the notification text (the "message" field)
@@ -396,6 +403,18 @@ def main() -> None:
     if (state / "quiet").exists() or (Path.home() / ".cc-voice-off").exists() \
        or dnd_active or muted:
         sys.exit(0)
+
+    # Toast-first: the voice is a COMPLEMENT to the banner, not its own channel.
+    # Speak only when the toast would actually be seen — if Windows has our
+    # notifications off (per-app or globally), the banner can't pop, so we stay
+    # silent too. Cheap winreg read (no subprocess, no wait); degrades to True
+    # (speak) on macOS or any uncertainty. See cc_toast_state for the contract.
+    try:
+        import cc_toast_state
+        if not cc_toast_state.toast_will_show():
+            sys.exit(0)
+    except Exception:
+        pass  # predictor unavailable → don't suppress the voice.
     text = None
     if event == "Notification":
         text = data.get("message")
