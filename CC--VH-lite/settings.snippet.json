@@ -1,5 +1,5 @@
 {
-  "_comment": "Preferido: corre `python CC--VH-lite/install.py` (hace el merge solo). Manual: reemplaza /ABSOLUTE/PATH/TO por la ruta del clon (usa / también en Windows) y `python3`->`python` en Windows. Fusiona estas llaves con tu ~/.claude/settings.json sin pisar un bloque hooks existente.",
+  "_comment": "Preferred: run `python CC--VH-lite/install.py` (it does the merge for you). Manual: replace /ABSOLUTE/PATH/TO with your clone path (use / on Windows too) and `python3`->`python` on Windows. Merge these keys into your ~/.claude/settings.json without clobbering an existing hooks block.",
   "hooks": {
     "Stop": [
       {
