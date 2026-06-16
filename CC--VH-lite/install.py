@@ -218,7 +218,14 @@ def tray_autostart_install(interp: str) -> None:
     vbs = startup / "cc_tray.vbs"
 
     # Absolute interpreter path (falls back to the name only if sys.executable is missing).
+    # Prefer pythonw.exe: it never allocates a console, so the tray launches at
+    # login with zero black-window flash (Run mode 0 only HIDES python.exe's
+    # console after it briefly spawns; pythonw never spawns one).
     py = sys.executable or interp
+    if IS_WINDOWS and py.lower().endswith("python.exe"):
+        pyw = Path(py).with_name("pythonw.exe")
+        if pyw.exists():
+            py = str(pyw)
     script = str(TRAY)
 
     def _vbs_quote(s: str) -> str:
