@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import json
+import time
 import shutil
 import argparse
 import subprocess
@@ -372,13 +373,25 @@ def main() -> None:
         speak_detached(args.say, args.voice)
         return
 
-    # Interruptor de silencio: respeta el `quiet` de cc-notify (ccn quiet)
-    # o el propio ~/.cc-voice-off. Calla sin reiniciar Claude Code.
-    if (Path.home() / ".cc-notify" / "quiet").exists() or \
-       (Path.home() / ".cc-voice-off").exists():
-        sys.exit(0)
-
+    # El payload trae el session_id, necesario para el mute por sesión.
     event, data = read_payload(args.hook)
+
+    # Interruptor de silencio: la voz respeta lo MISMO que el banner (cc_notify):
+    # quiet global, ~/.cc-voice-off, DND con timer y mute por sesión. Si el payload
+    # no trae session_id, solo se omite el check de mute por sesión.
+    state = Path.home() / ".cc-notify"
+    dnd_active = False
+    if (state / "dnd").exists():
+        try:
+            dnd_active = float((state / "dnd").read_text(encoding="utf-8").strip()) > time.time()
+        except (OSError, ValueError):
+            dnd_active = False
+    sid_raw = data.get("session_id")
+    sid = (re.sub(r"[^A-Za-z0-9_-]", "", sid_raw)[:8] or "claude") if sid_raw else ""
+    muted = bool(sid) and (state / "mute" / sid).exists()
+    if (state / "quiet").exists() or (Path.home() / ".cc-voice-off").exists() \
+       or dnd_active or muted:
+        sys.exit(0)
     text = None
     if event == "Notification":
         text = data.get("message")
