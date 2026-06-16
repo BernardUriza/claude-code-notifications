@@ -162,6 +162,16 @@ def check_deps() -> None:
             missing.append("pillow")
         print(f"  {opt} tray icon (opcional) — falta: pip install {' '.join(missing)}")
 
+    # Ventana de config (cross-platform). Tkinter viene incluido → siempre corre.
+    has_tk  = _has_module("tkinter")
+    has_ctk = _has_module("customtkinter")
+    if has_ctk:
+        print(f"  {ok} ventana de config (CustomTkinter, look moderno) — python cc_config_gui.py")
+    elif has_tk:
+        print(f"  {ok} ventana de config (Tkinter incluido) — python cc_config_gui.py · look bonito: pip install customtkinter")
+    else:
+        print(f"  {opt} ventana de config — tkinter ausente (raro); CustomTkinter: pip install customtkinter")
+
     if IS_WINDOWS:
         ps = shutil.which("powershell") is not None
         print(f"  {ok if ps else '❌'} powershell {'sí' if ps else 'NO — requerido para banners y voz'}")

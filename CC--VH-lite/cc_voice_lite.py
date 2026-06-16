@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import json
+import shutil
 import argparse
 import subprocess
 import tempfile
@@ -63,15 +64,33 @@ AZURE_KEY = _cfg("AZURE_OPENAI_TTS_KEY") or _cfg("AZURE_OPENAI_KEY")
 AZURE_ENDPOINT = _cfg("Endpoint", "https://northcentralus.api.cognitive.microsoft.com/").rstrip("/")
 AZURE_DEPLOYMENT = _cfg("Deployment", "tts")
 AZURE_API_VERSION = _cfg("API-Version", "2024-02-15-preview")
-AZURE_VOICE = os.environ.get("AZURE_TTS_VOICE", "onyx")
+
+# Config compartida (~/.cc-notify/config.json): voz, min_words, etc.
+# Prioridad: env var > config.json > secrets file > default.
+try:
+    import cc_config
+    _CC = cc_config.load()
+except Exception:
+    _CC = {"voice": "onyx", "min_words": 30, "max_chars_speech": 600, "speak_repo_name": True}
+
+# Voz OpenAI (alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer).
+# Prioridad: env AZURE_TTS_VOICE > config.json `voice` > secrets `Voice:` > onyx.
+AZURE_VOICE = (_cfg("AZURE_TTS_VOICE") or _CC.get("voice")
+               or _cfg("Voice") or "onyx")
+
+# ── edge-tts: voz neural GRATIS, sin API key (Microsoft Edge TTS) ──
+# Camino intermedio entre Azure (de pago, requiere key) y la voz local robótica.
+# Instálalo con `pip install edge-tts`. Lista voces con `edge-tts --list-voices`.
+EDGE_VOICE = os.environ.get("EDGE_TTS_VOICE", "es-MX-DaliaNeural")
 
 # Fallback último recurso: voz local `say` de macOS (instantánea, gratis).
 SAY_VOICE = os.environ.get("SAY_VOICE", "Paulina")
 
-# ── Selección de fragmento ──
-MIN_WORDS = 30
+# ── Selección de fragmento (configurable vía config.json) ──
+MIN_WORDS = int(_CC.get("min_words", 30))
 MAX_RATIO = 0.5
-MAX_CHARS = 600
+MAX_CHARS = int(_CC.get("max_chars_speech", 600))
+SPEAK_REPO = bool(_CC.get("speak_repo_name", True))
 SENTENCE_END = ".!?…"
 
 
@@ -121,11 +140,32 @@ def _say_local(text: str) -> None:
         pass
 
 
-def speak_blocking(text: str, voice: str) -> None:
-    """Genera el audio con Azure onyx y lo reproduce (afplay/MediaPlayer).
+def _edge_tts_to_file(text: str, out_path: str) -> bool:
+    """Genera mp3 con edge-tts (neural, gratis, sin key). True si lo logró.
 
-    Si Azure falla por lo que sea, cae a la voz local (SAPI en Windows, `say`
-    en macOS) para no quedar mudo.
+    Requiere `pip install edge-tts` (no viene en stdlib). El texto va por arg de
+    subprocess (lista, sin shell) así que no hay problemas de escaping.
+    """
+    exe = shutil.which("edge-tts")
+    if not exe:
+        return False
+    try:
+        r = subprocess.run(
+            [exe, "--voice", EDGE_VOICE, "--text", text, "--write-media", out_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        )
+        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+    except Exception:
+        return False
+
+
+def speak_blocking(text: str, voice: str) -> None:
+    """Genera el audio y lo reproduce (afplay en macOS, MediaPlayer en Windows).
+
+    Cadena de fallback, de mejor a más simple:
+      1. Azure OpenAI TTS onyx (si hay key en ~/.secrets).
+      2. edge-tts (neural, gratis, sin key — si está instalado).
+      3. Voz local offline (SAPI en Windows, `say` en macOS).
     """
     if AZURE_KEY:
         try:
@@ -156,8 +196,27 @@ def speak_blocking(text: str, voice: str) -> None:
                         pass
                 return
         except Exception:
-            pass  # cae al fallback
-    # Fallback: voz local (SAPI en Windows, `say` en macOS).
+            pass  # cae al siguiente nivel
+    # 2º: edge-tts (neural, gratis, sin key) si está instalado.
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fh:
+            edge_mp3 = fh.name
+        if _edge_tts_to_file(text, edge_mp3):
+            try:
+                _play_audio_file(edge_mp3)
+            finally:
+                try:
+                    os.unlink(edge_mp3)
+                except OSError:
+                    pass
+            return
+        try:
+            os.unlink(edge_mp3)
+        except OSError:
+            pass
+    except Exception:
+        pass  # cae al fallback local
+    # 3º: voz local offline (SAPI en Windows, `say` en macOS).
     _say_local(text)
 
 
@@ -315,7 +374,8 @@ def main() -> None:
         snippet = pick_words(clean_for_speech(text))
         if snippet:
             repo = project_name(data)
-            speak_detached(f"{repo}. {snippet}" if repo else snippet, AZURE_VOICE)
+            prefix = repo and SPEAK_REPO
+            speak_detached(f"{repo}. {snippet}" if prefix else snippet, AZURE_VOICE)
 
     sys.exit(0)
 

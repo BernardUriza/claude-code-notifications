@@ -55,8 +55,16 @@ SESS_DIR = STATE / "sessions"      # sessions/<sid>.json = última info (para `l
 QUIET = STATE / "quiet"            # existe = silencio global
 NOSOUND = STATE / "nosound"        # existe = banner sin sonido
 
-SOUND = "Glass"                    # sonido suave (macOS); cámbialo o apágalo con `ccn sound`
-MAX_CHARS = 140                    # corta el mensaje aquí (banner no cabe más)
+# Config (~/.cc-notify/config.json) con defaults sensatos si no existe.
+try:
+    import cc_config
+    _CFG = cc_config.load()
+except Exception:
+    _CFG = {"sound": "Glass", "max_chars_banner": 140, "dnd_default_min": 60}
+
+SOUND = _CFG.get("sound", "Glass")        # sonido del banner (macOS); "" = mudo. `ccn sound` lo togglea
+MAX_CHARS = _CFG.get("max_chars_banner", 140)  # corta el mensaje aquí (banner no cabe más)
+DND_DEFAULT_MIN = _CFG.get("dnd_default_min", 60)  # duración default del DND
 SELF = str(Path(__file__).resolve())
 PY = sys.executable or "python3"
 TN = shutil.which("terminal-notifier")
