@@ -1,71 +1,112 @@
 # claude-code-notifications 🔔
 
-Notificaciones para Claude Code en **macOS**, puro stdlib de Python. Te avisa
-cuando una sesión de Claude Code termina o pide permiso, sin que tengas que
-mirar la terminal. Dos piezas coordinadas que viven en [`CC--VH-lite/`](CC--VH-lite/):
+> **CC--VH-lite** = Claude Code Voice Handler — lite.
 
-| Script | Qué hace |
+Notifications for Claude Code on **macOS and Windows**, pure Python stdlib
+(every extra dependency is optional). It tells you when a Claude Code session
+finishes or asks for permission, so you don't have to watch the terminal. Two
+coordinated pieces that live in [`CC--VH-lite/`](CC--VH-lite/):
+
+| Script | What it does |
 |---|---|
-| **`cc_notify.py`** | Banner nativo de macOS por sesión (vía `terminal-notifier`/Hammerspoon/`osascript`). Agrupado: cada terminal reemplaza su propio banner, no se apilan 8. Control fino con el comando `ccn`. |
-| **`cc_voice_lite.py`** | Voz que lee un fragmento de la última respuesta de Claude. Usa Azure OpenAI TTS (voz *onyx*) con fallback al `say` de macOS. **Respeta el silencio de cc-notify**: si callas con `ccn quiet`, la voz también se calla. |
+| **`cc_notify.py`** | Native per-session banner. **macOS**: `terminal-notifier`/Hammerspoon/`osascript`. **Windows**: toast via BurntToast or, with no dependencies, WinRT (`Windows.UI.Notifications`). Grouped: each terminal replaces its own banner, no stacking 8 of them. Fine-grained control with the `ccn` command. |
+| **`cc_voice_lite.py`** | Voice that reads a snippet of Claude's last response. Fallback chain: **Azure OpenAI TTS (onyx)** → **edge-tts** (free neural voice, no key) → local voice (`say` on macOS, SAPI on Windows). **Respects cc-notify's silence**: if you mute with `ccn quiet`, the voice goes quiet too. |
 
-Cero daemon, cero cola, cero web UI. Solo dos scripts que los hooks invocan y
-salen al instante (el audio/banner corre en segundo plano, nunca bloquea a Claude).
+Zero daemon, zero queue, zero web UI. Just two scripts the hooks invoke and
+exit instantly (audio/banner run in the background, never block Claude).
 
-## Instalar
-
-1. Clona este repo donde quieras.
-2. Abre `CC--VH-lite/settings.snippet.json`, reemplaza `/ABSOLUTE/PATH/TO` por la
-   ruta real del clon, y fusiona el bloque `hooks` en tu `~/.claude/settings.json`
-   (no sobrescribas un bloque `hooks` que ya tengas — agrega las llaves).
-3. (Opcional, para voz Azure) crea `~/.secrets/azure-openai-key.txt` con:
-   ```
-   AZURE_OPENAI_TTS_KEY: <tu-key>
-   Endpoint: https://<region>.api.cognitive.microsoft.com/
-   Deployment: tts
-   API-Version: 2024-02-15-preview
-   ```
-   Sin esto, la voz cae al `say` de macOS (gratis, instantáneo). El banner de
-   `cc_notify.py` no necesita ninguna key.
-4. Reinicia Claude Code.
-
-## El comando `ccn` (control de cc-notify)
-
-```
-ccn list            sesiones recientes y cuáles están silenciadas
-ccn mute <sid>      silenciar una sesión   (o `mute all`)
-ccn unmute <sid>    reactivar una sesión   (o `unmute all`)
-ccn quiet           silencio global on/off (toggle) — también calla la voz
-ccn sound           sonido on/off (toggle) — banner sin ding
-ccn clear           borra los banners en pantalla + limpia estado
-ccn status          estado actual (quiet, sonido, sesiones muteadas)
-```
-
-## Probar sin Claude
+## Install (one command)
 
 ```bash
-# Banner
-echo '{"hook_event_name":"Stop","cwd":"/tmp/mi-repo","session_id":"abc123"}' \
-  | python3 CC--VH-lite/cc_notify.py
-
-# Voz (lee un transcript real)
-echo '{"hook_event_name":"Stop","transcript_path":"/ruta/al/transcript.jsonl"}' \
-  | python3 CC--VH-lite/cc_voice_lite.py
-
-# Voz, modo prueba directo
-python3 CC--VH-lite/cc_voice_lite.py --say "Probando, uno dos tres"
+git clone <this-repo>
+python CC--VH-lite/install.py        # macOS/Linux: use python3 if that's your binary
 ```
 
-## Por qué no bloquea a Claude
+The installer detects your platform, the clone path, and the right interpreter
+(`python` vs `python3`), **merges** the `Stop` + `Notification` hooks into your
+`~/.claude/settings.json` without clobbering what you already have (it backs up
+first), and tells you which optional dependencies are missing. It's idempotent —
+you can re-run it.
 
-Cada script se lanza con `start_new_session=True` (proceso desacoplado): Claude
-no espera a que termine el banner ni el audio, y el hook sale con `exit 0` al
-instante.
+```bash
+python CC--VH-lite/install.py --dry-run     # see what it would do, without writing
+python CC--VH-lite/install.py --uninstall   # remove only these hooks
+```
+
+Then **restart Claude Code**.
+
+> **Manual install** (if you prefer): open `CC--VH-lite/settings.snippet.json`,
+> replace `/ABSOLUTE/PATH/TO` with your real clone path, and merge the `hooks`
+> block into your `~/.claude/settings.json` (don't overwrite an existing `hooks`
+> block — add the keys). On Windows use `python` and `/` paths.
+
+## Optional dependencies
+
+Everything works with nothing extra (banner + local voice). To raise the bar:
+
+| You want… | Install |
+|---|---|
+| Free neural voice (recommended) | `pip install edge-tts` |
+| Azure onyx voice (paid) | create `~/.secrets/azure-openai-key.txt` (format below) |
+| "Pretty" Windows banner | `Install-Module BurntToast` (PowerShell). Without it, falls back to WinRT, equally functional. |
+| macOS banner with a button | `brew install terminal-notifier` and/or Hammerspoon |
+
+Format of `~/.secrets/azure-openai-key.txt`:
+```
+AZURE_OPENAI_TTS_KEY: <your-key>
+Endpoint: https://<region>.api.cognitive.microsoft.com/
+Deployment: tts
+API-Version: 2024-02-15-preview
+```
+
+## The `ccn` command (cc-notify control)
+
+```
+ccn list            recent sessions and which ones are muted
+ccn mute <sid>      mute a session       (or `mute all`)
+ccn unmute <sid>    re-enable a session  (or `unmute all`)
+ccn quiet           global silence on/off (toggle) — also mutes the voice
+ccn sound           sound on/off (toggle) — banner without the ding
+ccn clear           clear on-screen banners + reset state
+ccn status          current state (quiet, sound, muted sessions)
+ccn stop            cut off the voice that's currently playing
+```
+
+## Test without Claude
+
+```bash
+# Banner (use `python` on Windows, `python3` on macOS)
+echo '{"hook_event_name":"Stop","cwd":"/tmp/my-repo","session_id":"abc123"}' \
+  | python CC--VH-lite/cc_notify.py
+
+# Voice (reads a real transcript)
+echo '{"hook_event_name":"Stop","transcript_path":"/path/to/transcript.jsonl"}' \
+  | python CC--VH-lite/cc_voice_lite.py
+
+# Voice, direct test mode
+python CC--VH-lite/cc_voice_lite.py --say "Testing, one two three"
+```
+
+## Platform notes
+
+- Claude Code runs the hooks through a POSIX shell (**Git Bash on Windows**),
+  which is why paths use `/` and `python` must be on your PATH. The installer
+  handles this for you.
+- On Windows there's a known bug where `settings.json` hooks are **not** invoked
+  inside the **Claude Desktop App** (they do fire in the CLI).
+- On Linux the voice works (edge-tts); the `cc_notify.py` banners are aimed at
+  macOS/Windows.
+
+## Why it doesn't block Claude
+
+Each script launches in a detached process (`start_new_session=True` on POSIX,
+`DETACHED_PROCESS` on Windows): Claude doesn't wait for the banner or the audio,
+and the hook exits with `exit 0` instantly.
 
 ---
 
-> Historia: nació como notificación por **voz** (`say`), que resultó invasiva
-> con varias terminales hablando encimadas. `cc_notify.py` la reemplazó con
-> banners nativos silenciables, y la voz se reconstruyó para integrarse con su
-> silenciador. La versión sobreingeniereada original (Qwen + OpenAI TTS + cola
-> SQLite + web UI) queda congelada en el historial de git.
+> History: it started as a **voice** notification (`say`), which turned out to be
+> intrusive with several terminals talking over each other. `cc_notify.py`
+> replaced it with native, mutable banners, and the voice was rebuilt to
+> integrate with its silencer. The original over-engineered version (Qwen +
+> OpenAI TTS + SQLite queue + web UI) is frozen in the git history.

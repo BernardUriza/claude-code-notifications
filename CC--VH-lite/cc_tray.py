@@ -1,46 +1,54 @@
 #!/usr/bin/env python3
 """
-cc_tray.py — Ícono en la bandeja del sistema para CC--VH-lite (Windows/macOS).
+cc_tray.py — System-tray icon for CC--VH-lite (Windows/macOS).
 
-Muestra el estado de cc-notify en tiempo real y permite silenciar, activar DND,
-o restablecer notificaciones — sin abrir una terminal.
+Shows cc-notify's state in real time and lets you mute, enable DND, or restore
+notifications — without opening a terminal.
 
-── Requisitos ──
+── Requirements ──
     pip install pystray pillow
 
-── Uso ──
-    python cc_tray.py            # lanza el tray y se queda en background
+── Usage ──
+    python cc_tray.py            # launch the tray and keep it in the background
     python cc_tray.py --help
 
-── Estados del ícono ──
-    🟢 Verde   = notificando (todo activo)
-    🟡 Amarillo = DND activo con timer
-    🔴 Rojo    = silencio global (ccn quiet)
-    ⚫ Gris    = cc-notify no instalado / sin sesiones
+── Icon states ──
+    🟢 Green  = notifying (all active)
+    🟡 Yellow = DND active with timer
+    🔴 Red    = global silence (ccn quiet)
+    ⚫ Gray   = cc-notify not installed / no sessions
 
-── Integración con claudecode ──
-    Agrega en tu ~/.claude/settings.json (o deja que install.py lo haga):
-    No requiere hookeo — corre aparte, persistente.
-    En Windows: agrégalo al Startup con install.py --tray-autostart.
+── Claude Code integration ──
+    No hooking required — it runs separately, persistent.
+    On Windows: add it to Startup with install.py --tray-autostart.
 """
 
 import sys
 import time
 import threading
+import subprocess
 from pathlib import Path
+
+# The Windows console defaults to cp1252 and blows up on the emojis in the
+# prints (--check-deps, error messages). UTF-8 so it doesn't crash.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 try:
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image          # the isotype drawing lives in cc_theme
 except ImportError:
     print(
-        "ERROR: Faltan dependencias del tray.\n"
-        "Instálalas con:  pip install pystray pillow\n"
-        "Luego vuelve a correr: python cc_tray.py"
+        "ERROR: Tray dependencies missing.\n"
+        "Install them with:  pip install pystray pillow\n"
+        "Then re-run: python cc_tray.py"
     )
     sys.exit(1)
 
-# ── Rutas de estado (mismas que cc_notify.py) ──
+# ── State paths (same as cc_notify.py) ──
 STATE   = Path.home() / ".cc-notify"
 MUTE_DIR = STATE / "mute"
 QUIET   = STATE / "quiet"
@@ -48,23 +56,19 @@ NOSOUND = STATE / "nosound"
 DND     = STATE / "dnd"
 SESS_DIR = STATE / "sessions"
 
-# ── Colores del ícono ──
-COLOR_ACTIVE  = "#22c55e"   # verde  — notificando
-COLOR_DND     = "#eab308"   # amarillo — DND con timer
-COLOR_QUIET   = "#ef4444"   # rojo   — silencio global
-COLOR_IDLE    = "#6b7280"   # gris   — sin sesiones / apagado
-BG            = "#1e1e1e"   # fondo del ícono (círculo oscuro)
-SIZE          = 64          # px del ícono (pystray lo escala)
+# Shared branding (palette + isotype drawn in code).
+import cc_theme
 
-REFRESH_SECS  = 15          # con qué frecuencia se refresca el estado
+SIZE          = 64          # icon px (pystray scales it)
+REFRESH_SECS  = 15          # how often the state refreshes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Estado
+# State
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _dnd_remaining() -> float:
-    """Segundos restantes de DND, o 0 si no está activo."""
+    """Seconds left of DND, or 0 if not active."""
     if not DND.exists():
         return 0.0
     try:
@@ -95,31 +99,32 @@ def _fmt_until(secs: float) -> str:
 
 
 def get_state() -> dict:
-    """Snapshot del estado actual de cc-notify."""
+    """Snapshot of cc-notify's current state."""
     quiet = QUIET.exists()
     dnd_rem = _dnd_remaining()
     nosound = NOSOUND.exists()
     sessions = list(SESS_DIR.glob("*.json"))
 
-    if quiet:
-        color = COLOR_QUIET
-        label = "Silenciado (global)"
+    if quiet or nosound:
+        variant = "muted"
+        label = "Silenced (global)" if quiet else "No sound"
         symbol = "🔇"
     elif dnd_rem > 0:
-        color = COLOR_DND
-        label = f"DND {_fmt_rem(dnd_rem)} (hasta {_fmt_until(dnd_rem)})"
+        variant = "dnd"
+        label = f"DND {_fmt_rem(dnd_rem)} (until {_fmt_until(dnd_rem)})"
         symbol = "⏳"
     elif sessions:
-        color = COLOR_ACTIVE
-        label = "Activo — notificando"
+        variant = "active"
+        label = "Active — notifying"
         symbol = "🔔"
     else:
-        color = COLOR_IDLE
-        label = "Sin sesiones"
+        variant = "idle"
+        label = "No sessions"
         symbol = "○"
 
     return {
-        "color": color,
+        "variant": variant,
+        "color": cc_theme.STATE_COLORS[variant],
         "label": label,
         "symbol": symbol,
         "quiet": quiet,
@@ -130,27 +135,16 @@ def get_state() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ícono generado con Pillow
+# Icon: CC--VH-lite isotype per state (delegated to cc_theme)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_icon(color: str) -> Image.Image:
-    """Genera un ícono cuadrado con un círculo del color dado."""
-    img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    pad = 4
-    # Sombra sutil
-    draw.ellipse([pad + 2, pad + 2, SIZE - pad + 2, SIZE - pad + 2],
-                 fill=(0, 0, 0, 80))
-    # Círculo principal
-    draw.ellipse([pad, pad, SIZE - pad, SIZE - pad], fill=color)
-    # Borde interior claro
-    draw.ellipse([pad + 3, pad + 3, SIZE - pad - 3, SIZE - pad - 3],
-                 outline=(255, 255, 255, 60), width=2)
-    return img
+def make_icon(variant: str) -> Image.Image:
+    """Tray isotype for the given state (active/dnd/muted/idle)."""
+    return cc_theme.draw_logo(SIZE, variant=variant)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Acciones del menú
+# Menu actions
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _write_dnd(minutes: int) -> None:
@@ -169,7 +163,7 @@ def _toggle_quiet() -> None:
         QUIET.unlink(missing_ok=True)
     else:
         QUIET.touch()
-        _cancel_dnd()   # quiet global cancela DND
+        _cancel_dnd()   # global quiet cancels DND
 
 
 def _toggle_sound() -> None:
@@ -189,7 +183,7 @@ class CCTray:
         self._icon: pystray.Icon | None = None
         self._stop_event = threading.Event()
 
-    # ── Helpers de menú ──
+    # ── Menu helpers ──
 
     def _on_dnd(self, minutes: int):
         def _do(icon, item):
@@ -213,23 +207,49 @@ class CCTray:
         self._refresh(icon)
 
     def _on_activate(self, icon, item):
-        """Activa todo: cancela quiet y DND."""
+        """Turn everything back on: cancel quiet and DND."""
         QUIET.unlink(missing_ok=True)
         _cancel_dnd()
         self._refresh(icon)
+
+    def _on_config(self, icon, item):
+        """Open the settings window as a SEPARATE process.
+
+        The tray (pystray) and the window (Tkinter) each own a mainloop;
+        running them in the same process fights over the loop. We launch
+        cc_config_gui.py detached with pythonw (no console on Windows).
+        """
+        gui = Path(__file__).resolve().parent / "cc_config_gui.py"
+        # On Windows use pythonw.exe (no console window) if it exists.
+        exe = sys.executable or "python"
+        if sys.platform.startswith("win"):
+            pw = exe.replace("python.exe", "pythonw.exe")
+            if Path(pw).exists():
+                exe = pw
+        kwargs: dict = dict(stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        if sys.platform.startswith("win"):
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        else:
+            kwargs["start_new_session"] = True
+        try:
+            subprocess.Popen([exe, str(gui)], **kwargs)
+        except OSError:
+            pass
 
     def _on_quit(self, icon, item):
         self._stop_event.set()
         icon.stop()
 
-    # ── Construcción del menú ──
+    # ── Menu construction ──
 
     def _build_menu(self, state: dict) -> pystray.Menu:
         quiet = state["quiet"]
         dnd_rem = state["dnd_rem"]
         nosound = state["nosound"]
 
-        # Ítem de estado (no clickeable, solo informativo)
+        # Status item (not clickable, informational only)
         status_item = pystray.MenuItem(
             f"{state['symbol']}  {state['label']}",
             None,
@@ -238,37 +258,41 @@ class CCTray:
 
         separator = pystray.Menu.SEPARATOR
 
-        # Acciones de silencio
+        # Silence actions
         if quiet or dnd_rem > 0:
-            toggle_item = pystray.MenuItem("🔔  Activar notificaciones", self._on_activate)
+            toggle_item = pystray.MenuItem("🔔  Resume notifications", self._on_activate)
         else:
-            toggle_item = pystray.MenuItem("🔇  Silencio global", self._on_quiet)
+            toggle_item = pystray.MenuItem("🔇  Global silence", self._on_quiet)
 
-        # Submenú DND
+        # DND submenu
         dnd_submenu = pystray.Menu(
-            pystray.MenuItem("30 minutos",  self._on_dnd(30)),
-            pystray.MenuItem("1 hora",      self._on_dnd(60)),
-            pystray.MenuItem("1.5 horas",   self._on_dnd(90)),
-            pystray.MenuItem("2 horas",     self._on_dnd(120)),
-            pystray.MenuItem("4 horas",     self._on_dnd(240)),
+            pystray.MenuItem("30 minutes",  self._on_dnd(30)),
+            pystray.MenuItem("1 hour",      self._on_dnd(60)),
+            pystray.MenuItem("1.5 hours",   self._on_dnd(90)),
+            pystray.MenuItem("2 hours",     self._on_dnd(120)),
+            pystray.MenuItem("4 hours",     self._on_dnd(240)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "Cancelar DND" if dnd_rem > 0 else "DND inactivo",
+                "Cancel DND" if dnd_rem > 0 else "DND inactive",
                 self._on_dnd_off,
                 enabled=dnd_rem > 0,
             ),
         )
-        dnd_item = pystray.MenuItem("⏳  No Molestar…", dnd_submenu)
+        dnd_item = pystray.MenuItem("⏳  Do Not Disturb…", dnd_submenu)
 
-        # Sonido
-        sound_label = "🔔  Activar sonido" if nosound else "🤫  Silenciar sonido"
+        # Sound
+        sound_label = "🔔  Enable sound" if nosound else "🤫  Mute sound"
         sound_item = pystray.MenuItem(sound_label, self._on_sound)
 
-        quit_item = pystray.MenuItem("✖  Cerrar tray", self._on_quit)
+        # Open settings window (default = double-click the icon)
+        config_item = pystray.MenuItem("⚙️  Settings…", self._on_config, default=True)
+
+        quit_item = pystray.MenuItem("✖  Quit tray", self._on_quit)
 
         return pystray.Menu(
             status_item,
             separator,
+            config_item,
             toggle_item,
             dnd_item,
             sound_item,
@@ -276,35 +300,35 @@ class CCTray:
             quit_item,
         )
 
-    # ── Actualización del ícono ──
+    # ── Icon refresh ──
 
     def _refresh(self, icon: pystray.Icon | None = None) -> None:
         tgt = icon or self._icon
         if tgt is None:
             return
         state = get_state()
-        tgt.icon = make_icon(state["color"])
+        tgt.icon = make_icon(state["variant"])
         tgt.title = f"cc-notify — {state['label']}"
         tgt.menu = self._build_menu(state)
 
     def _bg_refresh(self) -> None:
-        """Refresca el ícono cada REFRESH_SECS segundos en background."""
+        """Refresh the icon every REFRESH_SECS seconds in the background."""
         while not self._stop_event.wait(REFRESH_SECS):
             self._refresh()
 
-    # ── Entrada principal ──
+    # ── Entry point ──
 
     def run(self) -> None:
         state = get_state()
         icon = pystray.Icon(
             name="cc-notify",
-            icon=make_icon(state["color"]),
+            icon=make_icon(state["variant"]),
             title=f"cc-notify — {state['label']}",
             menu=self._build_menu(state),
         )
         self._icon = icon
 
-        # Hilo de refresco automático
+        # Auto-refresh thread
         t = threading.Thread(target=self._bg_refresh, daemon=True)
         t.start()
 
@@ -317,16 +341,16 @@ class CCTray:
 
 def main() -> None:
     import argparse
-    ap = argparse.ArgumentParser(description="CC--VH-lite: tray icon de cc-notify")
+    ap = argparse.ArgumentParser(description="CC--VH-lite: cc-notify tray icon")
     ap.add_argument(
         "--check-deps",
         action="store_true",
-        help="Solo verifica que pystray y pillow estén instalados",
+        help="Just check that pystray and pillow are installed",
     )
     args = ap.parse_args()
 
     if args.check_deps:
-        print("✅ pystray y pillow disponibles.")
+        print("✅ pystray and pillow available.")
         return
 
     CCTray().run()

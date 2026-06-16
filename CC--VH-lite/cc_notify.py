@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-cc-notify — Notificaciones nativas de macOS para Claude Code.
+cc-notify — Native macOS notifications for Claude Code.
 
-Reemplaza la voz invasiva. Cada sesión de Claude Code que termina dispara
-un banner de macOS (vía terminal-notifier), AGRUPADO por sesión (no se
-apilan 8 banners: cada terminal reemplaza el suyo). Haz click en el banner
-para silenciar esa sesión. Control fino con el comando `ccn`.
+Replaces the intrusive voice. Each Claude Code session that finishes fires a
+macOS banner (via terminal-notifier), GROUPED per session (no stacking 8
+banners: each terminal replaces its own). Click the banner to mute that
+session. Fine-grained control with the `ccn` command.
 
-── Cómo lo llaman los hooks de Claude Code ──
-El hook manda un JSON por stdin con: hook_event_name, cwd, transcript_path,
-session_id. Sin subcomando = modo hook (lee stdin y notifica).
+── How the Claude Code hooks call it ──
+The hook sends JSON over stdin with: hook_event_name, cwd, transcript_path,
+session_id. No subcommand = hook mode (read stdin and notify).
 
 ── Control (alias `ccn`) ──
-    ccn list            ver sesiones recientes y cuáles están silenciadas
-    ccn mute <sid>      silenciar una sesión (ya no notifica)
-    ccn mute all        silenciar TODAS las sesiones de golpe
-    ccn unmute <sid>    reactivar una sesión   (o `unmute all`)
-    ccn quiet           silencio global on/off (toggle)
-    ccn dnd <min>       No Molestar por N minutos (se reactiva solo)
-    ccn dnd             ver cuánto falta del DND activo
-    ccn dnd off         cancelar DND antes de que expire
-    ccn sound           sonido on/off (toggle) — banner sin ding
-    ccn clear           borra todos los banners en pantalla + limpia estado
-    ccn status          estado actual (quiet, dnd, sonido, sesiones muteadas)
+    ccn list            list recent sessions and which ones are muted
+    ccn mute <sid>      mute a session (stops notifying)
+    ccn mute all        mute ALL sessions at once
+    ccn unmute <sid>    re-enable a session     (or `unmute all`)
+    ccn quiet           global silence on/off (toggle)
+    ccn dnd <min>       Do Not Disturb for N minutes (auto-restores)
+    ccn dnd             show how much DND time is left
+    ccn dnd off         cancel DND before it expires
+    ccn sound           sound on/off (toggle) — banner without the ding
+    ccn clear           clear all on-screen banners + reset state
+    ccn status          current state (quiet, dnd, sound, muted sessions)
 
-── Prueba manual ──
+── Manual test ──
     echo '{"hook_event_name":"Stop","cwd":"/tmp/symfarmia","session_id":"abc123"}' \
         | python3 cc_notify.py
 """
@@ -38,8 +38,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-# La consola de Windows usa cp1252 por defecto y truena con emojis (los prints de
-# `ccn list/status` los usan). UTF-8 para no reventar.
+# The Windows console defaults to cp1252 and blows up on emojis (the `ccn
+# list/status` prints use them). UTF-8 so it doesn't crash.
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -48,27 +48,27 @@ except Exception:
 
 IS_WINDOWS = sys.platform.startswith("win")
 
-# ── Estado en disco (banderas como archivos: simple, sin daemon) ──
+# ── State on disk (flags as files: simple, no daemon) ──
 STATE = Path.home() / ".cc-notify"
-MUTE_DIR = STATE / "mute"          # mute/<sid> = sesión silenciada
-SESS_DIR = STATE / "sessions"      # sessions/<sid>.json = última info (para `list`)
-QUIET = STATE / "quiet"            # existe = silencio global
-NOSOUND = STATE / "nosound"        # existe = banner sin sonido
+MUTE_DIR = STATE / "mute"          # mute/<sid> = muted session
+SESS_DIR = STATE / "sessions"      # sessions/<sid>.json = latest info (for `list`)
+QUIET = STATE / "quiet"            # exists = global silence
+NOSOUND = STATE / "nosound"        # exists = banner without sound
 
-# Config (~/.cc-notify/config.json) con defaults sensatos si no existe.
+# Config (~/.cc-notify/config.json) with sensible defaults if it's missing.
 try:
     import cc_config
     _CFG = cc_config.load()
 except Exception:
     _CFG = {"sound": "Glass", "max_chars_banner": 140, "dnd_default_min": 60}
 
-SOUND = _CFG.get("sound", "Glass")        # sonido del banner (macOS); "" = mudo. `ccn sound` lo togglea
-MAX_CHARS = _CFG.get("max_chars_banner", 140)  # corta el mensaje aquí (banner no cabe más)
-DND_DEFAULT_MIN = _CFG.get("dnd_default_min", 60)  # duración default del DND
+SOUND = _CFG.get("sound", "Glass")        # banner sound (macOS); "" = silent. `ccn sound` toggles it
+MAX_CHARS = _CFG.get("max_chars_banner", 140)  # cut the message here (banner won't fit more)
+DND_DEFAULT_MIN = _CFG.get("dnd_default_min", 60)  # default DND duration
 SELF = str(Path(__file__).resolve())
 PY = sys.executable or "python3"
 TN = shutil.which("terminal-notifier")
-DND = STATE / "dnd"               # existe con timestamp = No Molestar hasta esa hora
+DND = STATE / "dnd"               # exists with a timestamp = Do Not Disturb until that time
 
 
 def ensure_dirs() -> None:
@@ -77,14 +77,14 @@ def ensure_dirs() -> None:
 
 
 def short_sid(sid: str | None) -> str:
-    """SID corto y legible para grupos y comandos."""
+    """Short, readable SID for groups and commands."""
     if not sid:
         return "claude"
     return re.sub(r"[^A-Za-z0-9_-]", "", sid)[:8] or "claude"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MODO HOOK
+# HOOK MODE
 # ─────────────────────────────────────────────────────────────────────────────
 def read_stdin_json() -> dict:
     if sys.stdin.isatty():
@@ -97,11 +97,11 @@ def read_stdin_json() -> dict:
 
 
 def clean(text: str) -> str:
-    """Quita markdown/código/emojis pa' un banner limpio."""
+    """Strip markdown/code/emojis for a clean banner."""
     if "```" in text:
         text = text.split("```", 1)[0]
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)   # [txt](url) -> txt
-    text = re.sub(r"[*_`#>~|]", "", text)                  # símbolos markdown
+    text = re.sub(r"[*_`#>~|]", "", text)                  # markdown symbols
     text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", text) # emojis
     text = " ".join(text.split())
     if len(text) > MAX_CHARS:
@@ -143,25 +143,25 @@ def last_assistant_text(transcript_path: str) -> str | None:
 
 
 def _xml_escape(s: str) -> str:
-    """Escapa los caracteres que romperían el XML del toast WinRT."""
+    """Escape the characters that would break the WinRT toast XML."""
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
              .replace('"', "&quot;").replace("'", "&apos;"))
 
 
 def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None:
-    """Toast nativo de Windows 10/11, NO bloqueante.
+    """Native Windows 10/11 toast, NON-blocking.
 
-    Agrupado por sesión (cada terminal reemplaza su propio toast vía Tag/group):
-      - BurntToast si el módulo está instalado (mejor UX, `Install-Module BurntToast`).
-      - Si no, WinRT (Windows.UI.Notifications) inline con el AppId de PowerShell
-        — cero dependencias, funciona en cualquier Windows 10/11.
-    Texto/título van por env vars para no pelear con el escaping de PowerShell.
+    Grouped per session (each terminal replaces its own toast via Tag/group):
+      - BurntToast if the module is installed (better UX, `Install-Module BurntToast`).
+      - Otherwise WinRT (Windows.UI.Notifications) inline with PowerShell's AppId
+        — zero dependencies, works on any Windows 10/11.
+    Text/title go through env vars to avoid fighting PowerShell's escaping.
     """
     body = f"{subtitle}: {message}" if message else subtitle
     silent = NOSOUND.exists()
     audio_xml = '<audio silent="true"/>' if silent else ''
-    # XML completo armado en Python (valores ya escapados): PowerShell solo hace
-    # LoadXml($env:CC_TOAST_XML), así no hay que pelear con comillas en la línea.
+    # Full XML built in Python (values already escaped): PowerShell only does
+    # LoadXml($env:CC_TOAST_XML), so there's no fighting quotes on the line.
     toast_xml = (
         '<toast><visual><binding template="ToastGeneric">'
         f'<text>{_xml_escape(title)}</text>'
@@ -201,14 +201,15 @@ def _notify_windows(title: str, subtitle: str, message: str, group: str) -> None
 
 
 def notify(title: str, subtitle: str, message: str, group: str) -> None:
-    """Banner de macOS con botón "Detener voz" vía Hammerspoon (hs.notify).
+    """macOS banner with a "Stop voice" button via Hammerspoon (hs.notify).
 
-    Hammerspoon es lo único que muestra banners CON botón en macOS 26
-    (terminal-notifier 2.0.0 está roto; osascript no soporta botones). El botón
-    "Detener voz" corta el afplay de la voz Arbor. Si `hs` no responde, cae a
-    osascript (banner sin botón); para silenciar usa `ccn mute`/`ccn quiet`.
+    Hammerspoon is the only thing that shows banners WITH a button on macOS 26
+    (terminal-notifier 2.0.0 is broken; osascript doesn't support buttons). The
+    "Stop voice" button cuts the afplay of the Arbor voice. If `hs` doesn't
+    respond, it falls back to osascript (banner without a button); to mute use
+    `ccn mute`/`ccn quiet`.
 
-    En Windows enruta a toasts nativos (BurntToast / WinRT).
+    On Windows it routes to native toasts (BurntToast / WinRT).
     """
     if IS_WINDOWS:
         _notify_windows(title, subtitle, message, group)
@@ -232,7 +233,7 @@ def notify(title: str, subtitle: str, message: str, group: str) -> None:
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    # Fallback osascript (sin botón). ensure_ascii=False por el emoji/acentos.
+    # osascript fallback (no button). ensure_ascii=False for emoji/accents.
     sound = "" if NOSOUND.exists() else f' sound name "{SOUND}"'
     script = (
         f"display notification {json.dumps(message or ' ', ensure_ascii=False)} "
@@ -252,7 +253,7 @@ def run_hook() -> None:
     event = data.get("hook_event_name", "Stop")
     sid = short_sid(data.get("session_id"))
 
-    # Silencios: global, DND con timer, o por sesión → ni nos molestamos.
+    # Silences: global, DND timer, or per-session → don't even bother.
     dnd_active = False
     if DND.exists():
         try:
@@ -260,7 +261,7 @@ def run_hook() -> None:
             if exp > time.time():
                 dnd_active = True
             else:
-                DND.unlink(missing_ok=True)   # expiró solo
+                DND.unlink(missing_ok=True)   # expired on its own
         except (OSError, ValueError):
             DND.unlink(missing_ok=True)
 
@@ -271,14 +272,14 @@ def run_hook() -> None:
     project = Path(cwd).name or "Claude Code"
 
     if event == "Notification":
-        message = clean(data.get("message") or "Necesita tu atención")
-        subtitle = "Necesita input"
+        message = clean(data.get("message") or "Needs your attention")
+        subtitle = "Needs input"
     else:  # Stop / SubagentStop
         tp = data.get("transcript_path")
-        message = clean(last_assistant_text(tp) or "Terminó") if tp else "Terminó"
-        subtitle = "Listo" if event == "Stop" else "Subagente listo"
+        message = clean(last_assistant_text(tp) or "Done") if tp else "Done"
+        subtitle = "Done" if event == "Stop" else "Subagent done"
 
-    # Guarda metadata pa' `ccn list`.
+    # Save metadata for `ccn list`.
     try:
         (SESS_DIR / f"{sid}.json").write_text(json.dumps({
             "sid": sid, "project": project, "subtitle": subtitle,
@@ -292,7 +293,7 @@ def run_hook() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MODO CONTROL (alias `ccn`)
+# CONTROL MODE (alias `ccn`)
 # ─────────────────────────────────────────────────────────────────────────────
 def remove_banner(group: str) -> None:
     if TN:
@@ -305,11 +306,11 @@ def cmd_list() -> None:
     files = sorted(SESS_DIR.glob("*.json"),
                    key=lambda f: f.stat().st_mtime, reverse=True)
     if not files:
-        print("Sin sesiones registradas todavía.")
+        print("No sessions recorded yet.")
         return
-    gq = " (SILENCIO GLOBAL activo)" if QUIET.exists() else ""
-    print(f"Sesiones recientes{gq}:")
-    print(f"  {'SID':<10} {'PROYECTO':<22} {'EDO':<6} ÚLTIMO")
+    gq = " (GLOBAL SILENCE active)" if QUIET.exists() else ""
+    print(f"Recent sessions{gq}:")
+    print(f"  {'SID':<10} {'PROJECT':<22} {'STATE':<6} LAST")
     now = time.time()
     for f in files:
         try:
@@ -328,7 +329,7 @@ def cmd_list() -> None:
 def cmd_mute(target: str | None) -> None:
     ensure_dirs()
     if target in (None, ""):
-        print("Uso: ccn mute <sid>   (o  ccn mute all)")
+        print("Usage: ccn mute <sid>   (or  ccn mute all)")
         return
     if target == "all":
         n = 0
@@ -336,12 +337,12 @@ def cmd_mute(target: str | None) -> None:
             (MUTE_DIR / f.stem).touch()
             remove_banner(f.stem)
             n += 1
-        print(f"🔇 Silenciadas {n} sesiones. (ccn unmute all pa' revertir)")
+        print(f"🔇 Muted {n} sessions. (ccn unmute all to revert)")
         return
     sid = short_sid(target)
     (MUTE_DIR / sid).touch()
     remove_banner(sid)
-    print(f"🔇 Sesión {sid} silenciada.")
+    print(f"🔇 Session {sid} muted.")
 
 
 def cmd_unmute(target: str | None) -> None:
@@ -351,34 +352,34 @@ def cmd_unmute(target: str | None) -> None:
         for f in MUTE_DIR.glob("*"):
             f.unlink(missing_ok=True)
             n += 1
-        print(f"🔔 Reactivadas {n} sesiones.")
+        print(f"🔔 Re-enabled {n} sessions.")
         return
     if not target:
-        print("Uso: ccn unmute <sid>   (o  ccn unmute all)")
+        print("Usage: ccn unmute <sid>   (or  ccn unmute all)")
         return
     sid = short_sid(target)
     (MUTE_DIR / sid).unlink(missing_ok=True)
-    print(f"🔔 Sesión {sid} reactivada.")
+    print(f"🔔 Session {sid} re-enabled.")
 
 
 def cmd_quiet() -> None:
     ensure_dirs()
     if QUIET.exists():
         QUIET.unlink(missing_ok=True)
-        print("🔔 Silencio global APAGADO — vuelven las notificaciones.")
+        print("🔔 Global silence OFF — notifications are back.")
     else:
         QUIET.touch()
-        print("🔇 Silencio global ENCENDIDO — cero notificaciones (ccn quiet pa' revertir).")
+        print("🔇 Global silence ON — zero notifications (ccn quiet to revert).")
 
 
 def cmd_sound() -> None:
     ensure_dirs()
     if NOSOUND.exists():
         NOSOUND.unlink(missing_ok=True)
-        print(f"🔔 Sonido ENCENDIDO ({SOUND}).")
+        print(f"🔔 Sound ON ({SOUND}).")
     else:
         NOSOUND.touch()
-        print("🤫 Sonido APAGADO — banners mudos (siguen visibles).")
+        print("🤫 Sound OFF — silent banners (still visible).")
 
 
 def cmd_clear() -> None:
@@ -388,7 +389,7 @@ def cmd_clear() -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for f in SESS_DIR.glob("*.json"):
         f.unlink(missing_ok=True)
-    print("🧹 Banners borrados y lista limpiada.")
+    print("🧹 Banners cleared and list reset.")
 
 
 def cmd_status() -> None:
@@ -405,28 +406,28 @@ def cmd_status() -> None:
             if rem > 0:
                 h, m = divmod(int(rem), 3600)
                 m2 = m // 60
-                dnd_str = f"⏳ {h}h{m2:02d}min restantes (hasta {_fmt_time(exp)})" if h else f"⏳ {m2}min restantes (hasta {_fmt_time(exp)})"
+                dnd_str = f"⏳ {h}h{m2:02d}min left (until {_fmt_time(exp)})" if h else f"⏳ {m2}min left (until {_fmt_time(exp)})"
             else:
                 DND.unlink(missing_ok=True)
         except (OSError, ValueError):
             DND.unlink(missing_ok=True)
 
-    print(f"Silencio global: {q}")
-    print(f"DND:             {dnd_str}")
-    print(f"Sonido:          {s}")
-    print(f"Sesiones mute:   {', '.join(muted) if muted else '(ninguna)'}")
+    print(f"Global silence: {q}")
+    print(f"DND:            {dnd_str}")
+    print(f"Sound:          {s}")
+    print(f"Muted sessions: {', '.join(muted) if muted else '(none)'}")
     if IS_WINDOWS:
-        bt = "sí" if shutil.which("powershell") else "NO (powershell ausente)"
-        print(f"backend toast:   Windows (BurntToast/WinRT) · powershell: {bt}")
+        bt = "yes" if shutil.which("powershell") else "NO (powershell missing)"
+        print(f"toast backend:  Windows (BurntToast/WinRT) · powershell: {bt}")
     else:
-        print(f"terminal-notifier: {'sí' if TN else 'NO (usando osascript)'}")
+        print(f"terminal-notifier: {'yes' if TN else 'NO (using osascript)'}")
 
 
 def cmd_dnd(arg: str | None) -> None:
-    """DND con timer: `ccn dnd 60` silencia 60 min y se reactiva solo."""
+    """DND with a timer: `ccn dnd 60` mutes for 60 min and auto-restores."""
     ensure_dirs()
     if arg in (None, ""):
-        # Mostrar estado actual
+        # Show current state
         if DND.exists():
             try:
                 exp = float(DND.read_text(encoding="utf-8").strip())
@@ -436,45 +437,45 @@ def cmd_dnd(arg: str | None) -> None:
                     m2 = m // 60
                     s2 = m % 60
                     if h:
-                        print(f"⏳ DND activo — {h}h{m2:02d}min restantes (hasta las {_fmt_time(exp)}).")
+                        print(f"⏳ DND active — {h}h{m2:02d}min left (until {_fmt_time(exp)}).")
                     else:
-                        print(f"⏳ DND activo — {m2}min {s2:02d}s restantes (hasta las {_fmt_time(exp)}).")
+                        print(f"⏳ DND active — {m2}min {s2:02d}s left (until {_fmt_time(exp)}).")
                     return
             except (OSError, ValueError):
                 pass
-        print("DND inactivo. Uso: ccn dnd <minutos>  |  ccn dnd off")
+        print("DND inactive. Usage: ccn dnd <minutes>  |  ccn dnd off")
         return
     if arg in ("off", "cancel", "0"):
         DND.unlink(missing_ok=True)
-        print("🔔 DND cancelado — vuelven las notificaciones.")
+        print("🔔 DND canceled — notifications are back.")
         return
     try:
         minutes = int(arg)
     except ValueError:
-        print(f"Error: '{arg}' no es un número de minutos. Ej: ccn dnd 60")
+        print(f"Error: '{arg}' is not a number of minutes. E.g.: ccn dnd 60")
         return
     if minutes <= 0:
         DND.unlink(missing_ok=True)
-        print("🔔 DND cancelado.")
+        print("🔔 DND canceled.")
         return
     exp = time.time() + minutes * 60
     DND.write_text(str(exp), encoding="utf-8")
     h, m = divmod(minutes, 60)
     dur = f"{h}h{m:02d}min" if h else f"{minutes}min"
-    print(f"🤫 DND activado por {dur} (hasta las {_fmt_time(exp)}). Se reactiva solo.")
+    print(f"🤫 DND enabled for {dur} (until {_fmt_time(exp)}). Auto-restores.")
 
 
 def _fmt_time(ts: float) -> str:
-    """Hora local HH:MM para mostrar cuándo expira el DND."""
+    """Local time HH:MM to show when DND expires."""
     import time as _t
     lt = _t.localtime(ts)
     return f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
 
 
 def cmd_stop() -> None:
-    """Corta la voz que esté sonando y cualquier habla pendiente."""
+    """Cut the voice that's currently playing and any pending speech."""
     if IS_WINDOWS:
-        # Mata el reproductor (PowerShell MediaPlayer) y el proceso detached que habla.
+        # Kill the player (PowerShell MediaPlayer) and the detached speaking process.
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
              "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" "
@@ -486,7 +487,7 @@ def cmd_stop() -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-f", "cc_voice_lite.py --speak-now"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("⏹️  Voz detenida.")
+    print("⏹️  Voice stopped.")
 
 
 def main() -> None:
