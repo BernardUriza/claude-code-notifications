@@ -17,6 +17,7 @@ session_id. No subcommand = hook mode (read stdin and notify).
     ccn mute all        mute ALL sessions at once
     ccn unmute <sid>    re-enable a session     (or `unmute all`)
     ccn quiet           global silence on/off (toggle)
+    ccn stop            cut the voice playing RIGHT NOW (instant, any time)
     ccn dnd <min>       Do Not Disturb for N minutes (auto-restores)
     ccn dnd             show how much DND time is left
     ccn dnd off         cancel DND before it expires
@@ -78,6 +79,7 @@ SELF = str(Path(__file__).resolve())
 PY = sys.executable or "python3"
 TN = shutil.which("terminal-notifier")
 DND = STATE / "dnd"               # exists with a timestamp = Do Not Disturb until that time
+VOICE_LOCK = STATE / "voice.lock"  # active speaker's PID; poison it to cut the voice mid-flight
 
 
 def ensure_dirs() -> None:
@@ -351,6 +353,7 @@ def cmd_mute(target: str | None) -> None:
             (MUTE_DIR / f.stem).touch()
             remove_banner(f.stem)
             n += 1
+        cut_active_voice()   # silence silences both: cut whatever is playing now
         print(f"🔇 Muted {n} sessions. (ccn unmute all to revert)")
         return
     sid = short_sid(target)
@@ -383,6 +386,7 @@ def cmd_quiet() -> None:
         print("🔔 Global silence OFF — notifications are back.")
     else:
         QUIET.touch()
+        cut_active_voice()   # silence silences both: cut whatever is playing now
         print("🔇 Global silence ON — zero notifications (ccn quiet to revert).")
 
 
@@ -403,6 +407,7 @@ def cmd_clear() -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for f in SESS_DIR.glob("*.json"):
         f.unlink(missing_ok=True)
+    cut_active_voice()   # clear means clear: cut whatever is playing now too
     print("🧹 Banners cleared and list reset.")
 
 
@@ -474,6 +479,7 @@ def cmd_dnd(arg: str | None) -> None:
         return
     exp = time.time() + minutes * 60
     DND.write_text(str(exp), encoding="utf-8")
+    cut_active_voice()   # silence silences both: cut whatever is playing now
     h, m = divmod(minutes, 60)
     dur = f"{h}h{m:02d}min" if h else f"{minutes}min"
     print(f"🤫 DND enabled for {dur} (until {_fmt_time(exp)}). Auto-restores.")
@@ -486,14 +492,31 @@ def _fmt_time(ts: float) -> str:
     return f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
 
 
-def cmd_stop() -> None:
-    """Cut the voice that's currently playing and any pending speech."""
+def cut_active_voice() -> None:
+    """Stop any voice playing RIGHT NOW — instantly and cooperatively.
+
+    Primary mechanism: poison the shared voice lock with a sentinel. Every active
+    player (MediaPlayer / SAPI / afplay) polls this lock every 200ms and stops
+    itself the moment the owner PID no longer matches (cc_voice_lite._play_audio_file
+    / _say_local). Cut in ≤200ms, no process kill, no PID-reuse hazard. The next
+    legitimate voice re-claims the slot with its own PID, so the sentinel never
+    poisons future speech.
+
+    Belt-and-suspenders: also hard-kill any player still in its ~300ms pre-roll
+    (before its poll loop starts). Best-effort; never raises.
+    """
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        VOICE_LOCK.write_text("stop", encoding="utf-8")
+    except OSError:
+        pass
     if IS_WINDOWS:
-        # Kill the player (PowerShell MediaPlayer) and the detached speaking process.
+        # Kill the player powershell (MediaPlayer or SAPI). Both carry
+        # $env:CC_VOICE_LOCK literally in their -Command, so it's a safe match.
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
              "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" "
-             "| Where-Object { $_.CommandLine -match 'CC_AUDIO_PATH|speak-now' } "
+             "| Where-Object { $_.CommandLine -match 'CC_VOICE_LOCK' } "
              "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=CREATE_NO_WINDOW)
@@ -502,6 +525,11 @@ def cmd_stop() -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-f", "cc_voice_lite.py --speak-now"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def cmd_stop() -> None:
+    """Cut the voice that's currently playing and any pending speech."""
+    cut_active_voice()
     print("⏹️  Voice stopped.")
 
 

@@ -55,6 +55,7 @@ QUIET   = STATE / "quiet"
 NOSOUND = STATE / "nosound"
 DND     = STATE / "dnd"
 SESS_DIR = STATE / "sessions"
+VOICE_LOCK = STATE / "voice.lock"   # poison with a sentinel to cut the voice mid-flight
 
 # Shared branding (palette + isotype drawn in code).
 import cc_theme
@@ -157,6 +158,21 @@ def _cancel_dnd() -> None:
     DND.unlink(missing_ok=True)
 
 
+def _shut_up() -> None:
+    """Cut the voice playing right now — instantly, from the tray.
+
+    Poisons the shared voice lock with a sentinel; every active player polls it
+    every 200ms and self-stops the moment the owner PID stops matching (see
+    cc_voice_lite._play_audio_file / _say_local). Cut in ≤200ms, no process
+    kill. Best-effort; never raises.
+    """
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        VOICE_LOCK.write_text("stop", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _toggle_quiet() -> None:
     STATE.mkdir(parents=True, exist_ok=True)
     if QUIET.exists():
@@ -164,6 +180,7 @@ def _toggle_quiet() -> None:
     else:
         QUIET.touch()
         _cancel_dnd()   # global quiet cancels DND
+        _shut_up()      # silence silences both: cut whatever is playing now
 
 
 def _toggle_sound() -> None:
@@ -191,8 +208,13 @@ class CCTray:
             if QUIET.exists():
                 QUIET.unlink(missing_ok=True)
             _write_dnd(minutes)
+            _shut_up()      # silence silences both: cut whatever is playing now
             self._refresh(icon)
         return _do
+
+    def _on_shut_up(self, icon, item):
+        """Cut the voice playing right now, without changing any silence state."""
+        _shut_up()
 
     def _on_dnd_off(self, icon, item):
         _cancel_dnd()
@@ -284,6 +306,9 @@ class CCTray:
         sound_label = "🔔  Enable sound" if nosound else "🤫  Mute sound"
         sound_item = pystray.MenuItem(sound_label, self._on_sound)
 
+        # Shut up NOW — cut the voice playing this instant (no state change).
+        shut_up_item = pystray.MenuItem("⏹️  Shut up now", self._on_shut_up)
+
         # Open settings window (default = double-click the icon)
         config_item = pystray.MenuItem("⚙️  Settings…", self._on_config, default=True)
 
@@ -292,6 +317,7 @@ class CCTray:
         return pystray.Menu(
             status_item,
             separator,
+            shut_up_item,
             config_item,
             toggle_item,
             dnd_item,
