@@ -136,6 +136,17 @@ def _has_module(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def _tk_usable() -> bool:
+    """tkinter only counts if its C-extension actually loads. On Homebrew
+    Python the `tkinter` package exists but `_tkinter` isn't compiled, so
+    find_spec() lies — import it for real (fix: brew install python-tk@<ver>)."""
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def check_deps() -> None:
     print("\n── Dependencies ──")
     ok, opt = "✅", "·"
@@ -162,15 +173,19 @@ def check_deps() -> None:
             missing.append("pillow")
         print(f"  {opt} tray icon (optional) — missing: pip install {' '.join(missing)}")
 
-    # Config window (cross-platform). Tkinter is bundled → always runs.
-    has_tk  = _has_module("tkinter")
-    has_ctk = _has_module("customtkinter")
+    # Config window. customtkinter and the bundled tkinter BOTH need a working
+    # _tkinter C-extension; verify it loads, don't just trust find_spec.
+    has_tk  = _tk_usable()
+    has_ctk = _has_module("customtkinter") and has_tk
     if has_ctk:
         print(f"  {ok} config window (CustomTkinter, modern look) — python cc_config_gui.py")
     elif has_tk:
-        print(f"  {ok} config window (Tkinter bundled) — python cc_config_gui.py · nicer look: pip install customtkinter")
+        print(f"  {ok} config window (Tkinter) — python cc_config_gui.py · nicer look: pip install customtkinter")
+    elif IS_MAC:
+        ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+        print(f"  ❌ config window — Tk not compiled for this Python. Fix: brew install python-tk@{ver}")
     else:
-        print(f"  {opt} config window — tkinter missing (rare); CustomTkinter: pip install customtkinter")
+        print(f"  ❌ config window — tkinter/_tkinter missing. Install your distro's python3-tk package")
 
     if IS_WINDOWS:
         ps = shutil.which("powershell") is not None
