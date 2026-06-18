@@ -43,6 +43,7 @@ NOTIFY = HERE / "cc_notify.py"
 VOICE  = HERE / "cc_voice_lite.py"
 TRAY   = HERE / "cc_tray.py"
 SETTINGS = Path.home() / ".claude" / "settings.json"
+PLIST_LABEL = "com.ccvh.tray"
 EVENTS = ("Stop", "Notification")
 # Markers to recognize OUR hooks (from any path) so we can re-install or
 # uninstall without touching other people's hooks.
@@ -225,8 +226,11 @@ def tray_autostart_install(interp: str) -> None:
     path (sys.executable), not the bare `python` name, because the login
     process's PATH can differ from the shell's PATH where it was installed.
     """
+    if IS_MAC:
+        tray_autostart_install_macos(interp)
+        return
     if not IS_WINDOWS:
-        print("ℹ️  Tray autostart only applies on Windows.")
+        print("ℹ️  Tray autostart applies on macOS and Windows only.")
         return
     startup = _tray_autostart_path()
     startup.mkdir(parents=True, exist_ok=True)
@@ -259,7 +263,80 @@ def tray_autostart_install(interp: str) -> None:
     print("   To remove it: python install.py --tray-autostart-remove")
 
 
+def _macos_plist_path() -> Path:
+    """LaunchAgent plist — macOS launches it at login (Aqua/GUI session)."""
+    return Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
+
+
+def tray_autostart_install_macos(interp: str) -> None:
+    """Write + load a per-user LaunchAgent so cc_tray.py runs at login.
+
+    The macOS counterpart of the Windows Startup .vbs. RunAtLoad starts it on
+    login; KeepAlive only on crash (SuccessfulExit=false) so a manual Quit stays
+    quit — no insistent daemon (the project's Core Law: no daemon is required).
+    Uses the ABSOLUTE interpreter (sys.executable) — the login session's PATH
+    differs from the install shell's.
+    """
+    py = sys.executable or interp
+    plist = _macos_plist_path()
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    log = Path.home() / ".cc-notify" / "tray.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    plist_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{py}</string>
+        <string>{TRAY}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
+</dict>
+</plist>
+"""
+    plist.write_text(plist_xml, encoding="utf-8")
+
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{PLIST_LABEL}"],
+                   capture_output=True)
+    res = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist)],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        subprocess.run(["launchctl", "load", str(plist)], capture_output=True)
+
+    print(f"✅ Autostart created: {plist}")
+    print("   The tray icon will launch automatically at macOS login.")
+    print("   To remove it: python install.py --tray-autostart-remove")
+
+
 def tray_autostart_remove() -> None:
+    if IS_MAC:
+        plist = _macos_plist_path()
+        if plist.exists():
+            uid = os.getuid()
+            subprocess.run(["launchctl", "bootout", f"gui/{uid}/{PLIST_LABEL}"],
+                           capture_output=True)
+            plist.unlink()
+            print(f"🗑️  Autostart removed: {plist}")
+        else:
+            print("No tray autostart was installed.")
+        return
     if not IS_WINDOWS:
         return
     vbs = _tray_autostart_path() / "cc_tray.vbs"
@@ -357,9 +434,9 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="show without writing")
     ap.add_argument("--uninstall", action="store_true", help="remove only our hooks")
     ap.add_argument("--tray-autostart", action="store_true",
-                    help="(Windows) install cc_tray.py into Startup")
+                    help="install cc_tray.py at login (macOS LaunchAgent / Windows Startup)")
     ap.add_argument("--tray-autostart-remove", action="store_true",
-                    help="(Windows) remove the tray autostart")
+                    help="remove the tray autostart")
     ap.add_argument("--register-toast", action="store_true",
                     help="(Windows) register the AUMID so banners pop (not just Action Center)")
     args = ap.parse_args()
