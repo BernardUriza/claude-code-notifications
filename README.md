@@ -12,30 +12,23 @@ coordinated pieces that live in [`CC--VH-lite/`](CC--VH-lite/):
 | **`cc_notify.py`** | Native per-session banner. **macOS**: `terminal-notifier`/Hammerspoon/`osascript`. **Windows**: toast via BurntToast or, with no dependencies, WinRT (`Windows.UI.Notifications`). Grouped: each terminal replaces its own banner, no stacking 8 of them. Fine-grained control with the `ccn` command. |
 | **`cc_voice_lite.py`** | Voice that reads a snippet of Claude's last response. Fallback chain: **Azure OpenAI TTS (onyx)** → **edge-tts** (free neural voice, no key) → local voice (`say` on macOS, SAPI on Windows). **Respects cc-notify's silence**: if you mute with `ccn quiet`, the voice goes quiet too. |
 | **`cc_onyx_capture.py`** | *(optional)* Stop hook that saves Claude's **full** last response into the onyx feed (`~/.cc-notify/onyx-feed/`) — one small file write, exits instantly. Feeds the panel below. Off-switch: `touch ~/.cc-notify/onyx-off`. |
-| **`cc_onyx_panel.py`** | *(optional)* Local web panel — **http://localhost:4949** — listing every captured response with an in-browser player speaking in the **onyx** voice. Audio is synthesized **lazily** (only when you press play, via susurro gateway → Azure TTS fallback) and cached. Exists because some terminals (Apple Terminal.app) make no URL clickable: the browser is the reliable clickable surface. |
+| **`cc_onyx_panel.py`** | *(optional)* **Native Python GUI** (CustomTkinter → Tkinter fallback, cc_theme palette — same DNA as the config GUI) listing every captured response, newest first, each with a ▶ button that speaks it in the **onyx** voice. Audio is synthesized **lazily** (only when you press play: susurro gateway → Azure TTS → nothing) and cached next to the entry, so capturing everything costs zero. One playback at a time; ▶ toggles to ■. No web server, no localhost, no browser. |
 
-Zero daemon, zero queue, zero web UI **on the core path** — banner and voice
-are just scripts the hooks invoke and exit instantly (audio/banner run in the
-background, never block Claude). The onyx panel is a strictly optional extra
-that runs as its own LaunchAgent and can be ignored entirely.
+Zero daemon, zero queue, zero web UI. The banner and voice are scripts the
+hooks invoke and exit instantly (audio/banner run in the background, never
+block Claude). The onyx panel is an on-demand window, not a resident service.
 
-### Onyx panel setup (macOS, optional)
+### Onyx panel (optional)
 
 ```bash
-mkdir -p ~/.cc-notify/bin
-cp CC--VH-lite/cc_onyx_panel.py ~/.cc-notify/bin/
-sed "s|/ABSOLUTE/PATH/TO/claude-code-notifications|$HOME/.cc-notify|; s|CC--VH-lite/cc_onyx_panel.py|bin/cc_onyx_panel.py|" \
-  CC--VH-lite/com.bernarduriza.cc-onyx-panel.plist > ~/Library/LaunchAgents/com.bernarduriza.cc-onyx-panel.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bernarduriza.cc-onyx-panel.plist
-open http://localhost:4949
+# capture: add the cc_onyx_capture.py line from settings.snippet.json to your
+# Stop/SubagentStop hooks (or re-run install.py) and restart Claude Code.
+# view: open the panel whenever you want to LISTEN to what Claude answered.
+python3 CC--VH-lite/cc_onyx_panel.py
 ```
 
-The runtime copy in `~/.cc-notify/bin/` is required: launchd cannot read
-`~/Documents` (macOS TCC privacy protection denies LaunchAgents access to
-Documents/Desktop/Downloads — you get `Operation not permitted`). Re-copy the
-file after pulling changes. Add the `cc_onyx_capture.py` line from
-`settings.snippet.json` to your `Stop`/`SubagentStop` hooks and restart Claude
-Code.
+New responses appear in the open window within ~3s (it polls the feed on
+disk). Entries are pruned at 200; the panel shows the latest 50.
 
 ## Install (one command)
 
