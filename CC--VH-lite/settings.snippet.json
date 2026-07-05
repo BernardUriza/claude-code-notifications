@@ -5,7 +5,15 @@
       {
         "hooks": [
           { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_notify.py" },
-          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_voice_lite.py" }
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_voice_lite.py" },
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_onyx_capture.py" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-code-notifications/CC--VH-lite/cc_onyx_capture.py" }
         ]
       }
     ],
