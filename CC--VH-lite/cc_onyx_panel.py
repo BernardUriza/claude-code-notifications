@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-cc_onyx_panel.py — Onyx response panel for CC--VH-lite (native Python GUI).
+cc_onyx_panel.py — Onyx response feed for CC--VH-lite (embeddable module).
 
-Lists every Claude response captured by cc_onyx_capture.py
-(~/.cc-notify/onyx-feed/), newest first, each with a Play button that speaks
-it in the onyx voice. Audio is synthesized LAZILY — only when you press play —
-then cached as <id>.mp3 next to its entry, so capturing everything costs
-nothing and replaying is instant.
+Provides OnyxFeedFrame, the widget that lists every Claude response captured
+by cc_onyx_capture.py (~/.cc-notify/onyx-feed/), newest first, each with a
+play button that speaks it in the onyx voice. It is embedded as a tab of the
+settings GUI (cc_config_gui.py) — ONE window, one UX, no separate app, no web
+server, no localhost.
 
-Same GUI DNA as cc_config_gui.py: CustomTkinter if installed, plain Tkinter
-fallback (bundled with Python), cc_theme palette. No web server, no browser,
-no localhost — a window (Core Law: nothing optional becomes required; this
-panel is an on-demand app, not a daemon).
+Audio is synthesized LAZILY — only when you press play — then cached as
+<id>.mp3 next to its entry, so capturing everything costs nothing and
+replaying is instant.
 
 Synthesis chain (mirrors the repo's fallback philosophy):
   1. susurro gateway (SUSURRO_KEY in ~/.secrets/susurro-gateway-key.txt)
   2. Azure OpenAI TTS direct (same secrets contract as cc_voice_lite)
-  3. local `say`/SAPI voice as last resort
+  3. nothing — the ✕ on the button reports the failure honestly
 
-Usage:
-    python3 cc_onyx_panel.py
+Run the UI:
+    python3 cc_config_gui.py
 """
 
 import json
@@ -32,17 +31,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-import cc_theme
-
-USING_CTK = False
-try:
-    import customtkinter as ctk
-    ctk.set_appearance_mode("dark")
-    USING_CTK = True
-except ImportError:
-    import tkinter as ctk          # type: ignore
-
 import tkinter as tk
+
+import cc_theme as C
 
 FEED = Path.home() / ".cc-notify" / "onyx-feed"
 VOICE = os.environ.get("CC_ONYX_VOICE", "onyx")
@@ -54,11 +45,9 @@ SUSURRO_SECRETS = Path.home() / ".secrets" / "susurro-gateway-key.txt"
 SUSURRO_URL = os.environ.get("SUSURRO_TTS_URL", "https://sus.bernarduriza.com/v1/tts")
 AZURE_SECRETS = Path.home() / ".secrets" / "azure-openai-key.txt"
 
-C = cc_theme
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Synthesis (lazy, cached) — no GUI code below this banner
+# Synthesis (lazy, cached)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _secret(path: Path, name: str) -> str:
@@ -163,10 +152,6 @@ class Player:
                 and self.proc.poll() is None)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GUI
-# ─────────────────────────────────────────────────────────────────────────────
-
 def read_feed():
     """Feed entries, newest first: [{id, text, repo, time}]."""
     items = []
@@ -192,109 +177,79 @@ def read_feed():
     return items
 
 
-class OnyxPanel:
-    def __init__(self):
+# ─────────────────────────────────────────────────────────────────────────────
+# Embeddable feed widget (plain tk — renders fine inside CTk parents too)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OnyxFeedFrame(tk.Frame):
+    """Scrollable list of captured responses with per-card play/stop."""
+
+    def __init__(self, parent, mono: str):
+        super().__init__(parent, bg=C.BG)
+        self.mono = mono
         self.player = Player()
-        self.cards = {}          # entry_id -> card frame (insertion tracking)
-        self.busy = set()        # entry_ids currently synthesizing
+        self.cards = {}
+        self.busy = set()
 
-        if USING_CTK:
-            self.root = ctk.CTk()
-            self.root.configure(fg_color=C.BG)
-        else:
-            self.root = tk.Tk()
-            self.root.configure(bg=C.BG)
-        self.root.title("Onyx — respuestas de Claude")
-        self.root.geometry("680x760")
-        self.root.minsize(480, 400)
+        bar_row = tk.Frame(self, bg=C.BG)
+        bar_row.pack(fill="x", padx=4, pady=(6, 2))
+        self.status = tk.Label(bar_row, text="", bg=C.BG, fg=C.TEXT_DIM,
+                               font=(mono, 10), anchor="e")
+        self.status.pack(side="right")
+        tk.Label(bar_row, text="respuestas capturadas · play = voz onyx",
+                 bg=C.BG, fg=C.TEXT_DIM, font=(mono, 10),
+                 anchor="w").pack(side="left")
 
-        self._build_header()
-        self._build_list()
+        wrap = tk.Frame(self, bg=C.BG)
+        wrap.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(wrap, bg=C.BG, highlightthickness=0)
+        bar = tk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
+        self.list = tk.Frame(self.canvas, bg=C.BG)
+        self.list.bind("<Configure>", lambda e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        win = self.canvas.create_window((0, 0), window=self.list, anchor="nw")
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(
+            win, width=e.width))
+        self.canvas.configure(yscrollcommand=bar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+
         self._poll()
-        self.root.mainloop()
 
-    # ── layout ──
-    def _build_header(self):
-        if USING_CTK:
-            head = ctk.CTkFrame(self.root, fg_color="transparent")
-            head.pack(fill="x", padx=16, pady=(14, 6))
-            ctk.CTkLabel(head, text="🔊 Onyx — respuestas de Claude",
-                         text_color=C.TEXT,
-                         font=(C.MONO_STACK[0], 17, "bold")).pack(side="left")
-            self.status = ctk.CTkLabel(head, text="", text_color=C.TEXT_DIM,
-                                       font=(C.MONO_STACK[0], 12))
-            self.status.pack(side="right")
-        else:
-            head = tk.Frame(self.root, bg=C.BG)
-            head.pack(fill="x", padx=16, pady=(14, 6))
-            tk.Label(head, text="🔊 Onyx — respuestas de Claude", bg=C.BG,
-                     fg=C.TEXT, font=(C.MONO_STACK[0], 15, "bold")).pack(side="left")
-            self.status = tk.Label(head, text="", bg=C.BG, fg=C.TEXT_DIM)
-            self.status.pack(side="right")
+    def _wheel(self, event):
+        if self.canvas.winfo_exists():
+            self.canvas.yview_scroll(-1 * int(event.delta), "units")
 
-    def _build_list(self):
-        if USING_CTK:
-            self.list_frame = ctk.CTkScrollableFrame(
-                self.root, fg_color=C.BG, scrollbar_button_color=C.BORDER)
-            self.list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        else:
-            wrap = tk.Frame(self.root, bg=C.BG)
-            wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-            canvas = tk.Canvas(wrap, bg=C.BG, highlightthickness=0)
-            bar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
-            self.list_frame = tk.Frame(canvas, bg=C.BG)
-            self.list_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-            win = canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
-            canvas.bind("<Configure>",
-                        lambda e: canvas.itemconfigure(win, width=e.width))
-            canvas.configure(yscrollcommand=bar.set)
-            canvas.pack(side="left", fill="both", expand=True)
-            bar.pack(side="right", fill="y")
-
-    def _make_card(self, item):
-        preview = item["text"][:400] + ("…" if len(item["text"]) > 400 else "")
-        header = f"{item['repo']}  ·  {item['time']}" if item["repo"] else item["time"]
-
-        if USING_CTK:
-            card = ctk.CTkFrame(self.list_frame, fg_color=C.BG_CARD,
-                                corner_radius=10)
-            top = ctk.CTkFrame(card, fg_color="transparent")
-            top.pack(fill="x", padx=12, pady=(10, 2))
-            ctk.CTkLabel(top, text=header, text_color=C.TEXT_DIM,
-                         font=(C.MONO_STACK[0], 11)).pack(side="left")
-            btn = ctk.CTkButton(top, text="▶", width=44,
-                                fg_color=C.ACCENT_LO, hover_color=C.ACCENT,
-                                font=(C.MONO_STACK[0], 13, "bold"))
-            btn.pack(side="right")
-            ctk.CTkLabel(card, text=preview, text_color=C.TEXT, justify="left",
-                         wraplength=560, font=(C.MONO_STACK[0], 12)
-                         ).pack(fill="x", padx=12, pady=(0, 10))
-        else:
-            card = tk.Frame(self.list_frame, bg=C.BG_CARD,
-                            highlightbackground=C.BORDER, highlightthickness=1)
-            top = tk.Frame(card, bg=C.BG_CARD)
-            top.pack(fill="x", padx=10, pady=(8, 2))
-            tk.Label(top, text=header, bg=C.BG_CARD, fg=C.TEXT_DIM,
-                     font=(C.MONO_STACK[0], 10)).pack(side="left")
-            btn = tk.Button(top, text="▶", width=3, bg=C.BG_INPUT, fg=C.ACCENT,
-                            activebackground=C.ACCENT_LO, relief="flat")
-            btn.pack(side="right")
-            tk.Label(card, text=preview, bg=C.BG_CARD, fg=C.TEXT,
-                     justify="left", wraplength=560, anchor="w",
-                     font=(C.MONO_STACK[0], 11)).pack(fill="x", padx=10,
-                                                      pady=(0, 8))
-
-        btn.configure(command=lambda i=item["id"], b=btn: self._toggle(i, b))
-        return card
-
-    # ── behavior ──
     def _set_status(self, text):
         try:
             self.status.configure(text=text)
-        except Exception:
+        except tk.TclError:
             pass
+
+    def _make_card(self, item):
+        preview = item["text"][:380] + ("…" if len(item["text"]) > 380 else "")
+        header = f"{item['repo']}  ·  {item['time']}" if item["repo"] else item["time"]
+
+        card = tk.Frame(self.list, bg=C.BG_CARD,
+                        highlightbackground=C.BORDER, highlightthickness=1)
+        top = tk.Frame(card, bg=C.BG_CARD)
+        top.pack(fill="x", padx=12, pady=(9, 2))
+        tk.Label(top, text=header, bg=C.BG_CARD, fg=C.TEXT_DIM,
+                 font=(self.mono, 10)).pack(side="left")
+        btn = C.flat_button(top, "▶", lambda: None, kind="ghost",
+                            font=(self.mono, 11, "bold"), padx=14, pady=2)
+        btn.pack(side="right")
+        body = tk.Label(card, text=preview, bg=C.BG_CARD, fg=C.TEXT,
+                        justify="left", anchor="w", wraplength=520,
+                        font=(self.mono, 11))
+        body.pack(fill="x", padx=12, pady=(2, 10))
+        card.bind("<Configure>", lambda e, b=body: b.configure(
+            wraplength=max(200, e.width - 40)))
+
+        btn.bind("<Button-1>",
+                 lambda e, i=item["id"], b=btn: self._toggle(i, b))
+        return card
 
     def _toggle(self, entry_id, btn):
         if self.player.playing(entry_id):
@@ -310,6 +265,7 @@ class OnyxPanel:
 
         def work():
             mp3 = mp3_for(entry_id)
+
             def done():
                 self.busy.discard(entry_id)
                 if mp3 is None:
@@ -320,18 +276,19 @@ class OnyxPanel:
                 btn.configure(text="■")
                 self._set_status("")
                 self._watch(entry_id, btn)
-            self.root.after(0, done)
+
+            self.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
     def _watch(self, entry_id, btn):
         """Flip the button back to ▶ when playback ends on its own."""
         if self.player.playing(entry_id):
-            self.root.after(300, lambda: self._watch(entry_id, btn))
+            self.after(300, lambda: self._watch(entry_id, btn))
         else:
             try:
                 btn.configure(text="▶")
-            except Exception:
+            except tk.TclError:
                 pass
 
     def _poll(self):
@@ -339,12 +296,13 @@ class OnyxPanel:
             if item["id"] in self.cards:
                 continue
             card = self._make_card(item)
-            existing = [w for w in self.cards.values()]
-            card.pack(fill="x", pady=5, padx=4,
-                      before=existing[-1] if existing else None)
+            existing = list(self.cards.values())
+            if existing:
+                card.pack(fill="x", pady=5, padx=6, before=existing[-1])
+            else:
+                card.pack(fill="x", pady=5, padx=6)
             self.cards[item["id"]] = card
-        self.root.after(POLL_MS, self._poll)
-
-
-if __name__ == "__main__":
-    OnyxPanel()
+        try:
+            self.after(POLL_MS, self._poll)
+        except tk.TclError:
+            pass

@@ -146,6 +146,55 @@ def draw_logo(size: int, *, variant: str = "active",
     return img.resize((max(size, 8), max(size, 8)), Image.LANCZOS)
 
 
+# ── Shared flat widgets (plain-Tkinter branch) ──────────────────────────────
+# macOS aqua Tk IGNORES bg/activebackground on tk.Button and draws native white
+# buttons/checkboxes that break the dark UI (the 2026-07-05 screenshot). These
+# Label-based widgets give full color control on every platform, so the plain
+# branch keeps the dev-tool DNA without CustomTkinter.
+
+def flat_button(parent, text, command, *, kind="ghost", font=None, padx=12, pady=4):
+    """Dark flat button. kind: 'ghost' (accent outline feel) | 'primary' | 'dim'."""
+    import tkinter as tk
+    styles = {
+        "ghost":   dict(bg=BG_INPUT, fg=ACCENT,  hover=ACCENT_LO, hover_fg=TEXT),
+        "primary": dict(bg=ACCENT,   fg="#08222e", hover=ACCENT_HI, hover_fg="#08222e"),
+        "dim":     dict(bg=BG_INPUT, fg=TEXT_DIM, hover=DANGER,    hover_fg=TEXT),
+    }
+    s = styles.get(kind, styles["ghost"])
+    kw = {"font": font} if font else {}
+    lbl = tk.Label(parent, text=text, bg=s["bg"], fg=s["fg"],
+                   padx=padx, pady=pady, cursor="pointinghand", **kw)
+    lbl.bind("<Button-1>", lambda e: command())
+    lbl.bind("<Enter>", lambda e: lbl.configure(bg=s["hover"], fg=s["hover_fg"]))
+    lbl.bind("<Leave>", lambda e: lbl.configure(bg=s["bg"], fg=s["fg"]))
+    return lbl
+
+
+def flat_check(parent, text, var, command=None, *, bg=None, font=None):
+    """Dark checkbox row (Label-based): '✓' accent when on, '○' dim when off."""
+    import tkinter as tk
+    bg = bg or BG_CARD
+
+    kw = {"font": font} if font else {}
+    lbl = tk.Label(parent, bg=bg, anchor="w", padx=0,
+                   cursor="pointinghand", **kw)
+
+    def _paint():
+        on = bool(var.get())
+        lbl.configure(text=("✓  " if on else "○  ") + text,
+                      fg=ACCENT if on else TEXT_DIM)
+
+    def _toggle(_e=None):
+        var.set(not var.get())
+        _paint()
+        if command:
+            command()
+
+    lbl.bind("<Button-1>", _toggle)
+    _paint()
+    return lbl
+
+
 def _apply_gradient(mask_img, top_color: str, bottom_color: str):
     """Tint the opaque pixels of mask_img with a vertical gradient."""
     S = mask_img.size[0]
